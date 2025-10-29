@@ -44,7 +44,7 @@ class CEMArtifacts(ScriptedLoadableModule):
         self.parent.title = "CEMArtifacts"  
         self.parent.categories = ["Examples"]  
         self.parent.dependencies = []  
-        self.parent.contributors = ["Donna Hooft"]  
+        self.parent.contributors = ["Donna Hooft;Valentina Corbetta"]  
         self.parent.helpText = """
 Slicer3D extension for assesing presence of artifacts on recombined Contrast Enhanced Mammography (CEM) images and 
 for segmentation of Artifacts which are not locally bound.
