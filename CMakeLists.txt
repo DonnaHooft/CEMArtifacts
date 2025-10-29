@@ -18,6 +18,7 @@ include(${Slicer_USE_FILE})
 #-----------------------------------------------------------------------------
 # Extension modules
 add_subdirectory(CEMArtifacts)
+add_subdirectory(Examples)
 ## NEXT_MODULE
 
 #-----------------------------------------------------------------------------
