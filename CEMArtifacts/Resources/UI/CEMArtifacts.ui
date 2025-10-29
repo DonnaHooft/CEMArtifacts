@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>NiftyViewer</class>
+ <widget class="qMRMLWidget" name="NiftyViewer">
+  <property name="geometry">
+   <rect>
+    <x>0</x>
+    <y>0</y>
+    <width>458</width>
+    <height>707</height>
+   </rect>
+  </property>
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <widget class="QLabel" name="status_checked">
+     <property name="text">
+      <string>Checked: 0 / N</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="ctkCollapsibleButton" name="inputsCollapsibleButton" native="true">
+     <property name="text" stdset="0">
+      <string>Artifact Present</string>
+     </property>
+     <layout class="QFormLayout" name="formLayout_2">
+      <item row="8" column="0">
+       <widget class="QGroupBox" name="buttongroup">
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>150</height>
+         </size>
+        </property>
+        <property name="title">
+         <string>Which Artifact Present?</string>
+        </property>
+        <widget class="QCheckBox" name="checkBox_1">
+         <property name="geometry">
+          <rect>
+           <x>10</x>
+           <y>20</y>
+           <width>151</width>
+           <height>20</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>1 - Breast in Breast</string>
+         </property>
+        </widget>
+        <widget class="QCheckBox" name="checkBox_2">
+         <property name="geometry">
+          <rect>
+           <x>10</x>
+           <y>40</y>
+           <width>151</width>
+           <height>20</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>2 - Skin Illumination</string>
+         </property>
+        </widget>
+        <widget class="QCheckBox" name="checkBox_3">
+         <property name="geometry">
+          <rect>
+           <x>10</x>
+           <y>60</y>
+           <width>151</width>
+           <height>20</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>3 - Air trapping</string>
+         </property>
+        </widget>
+        <widget class="QCheckBox" name="checkBox_4">
+         <property name="geometry">
+          <rect>
+           <x>10</x>
+           <y>80</y>
+           <width>151</width>
+           <height>20</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>4 - Ripple (Motion Artifact) </string>
+         </property>
+        </widget>
+        <widget class="QCheckBox" name="checkBox_5">
+         <property name="geometry">
+          <rect>
+           <x>10</x>
+           <y>100</y>
+           <width>151</width>
+           <height>20</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>5 - Contrast Splatter</string>
+         </property>
+        </widget>
+        <widget class="QCheckBox" name="checkBox_6">
+         <property name="geometry">
+          <rect>
+           <x>10</x>
+           <y>120</y>
+           <width>151</width>
+           <height>20</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>6 - Implant</string>
+         </property>
+        </widget>
+       </widget>
+      </item>
+      <item row="11" column="0">
+       <widget class="QLabel" name="status_checked_2">
+        <property name="text">
+         <string>Other</string>
+        </property>
+       </widget>
+      </item>
+      <item row="12" column="0">
+       <widget class="QPlainTextEdit" name="comment"/>
+      </item>
+      <item row="13" column="0">
+       <widget class="QPushButton" name="save_and_next">
+        <property name="text">
+         <string>Save,  Open Next</string>
+        </property>
+        <property name="shortcut">
+         <string>Ctrl+Return</string>
+        </property>
+       </widget>
+      </item>
+      <item row="7" column="0">
+       <widget class="QGroupBox" name="buttongroup_0">
+        <property name="minimumSize">
+         <size>
+          <width>0</width>
+          <height>150</height>
+         </size>
+        </property>
+        <property name="title">
+         <string>Artifact Present? </string>
+        </property>
+        <widget class="QRadioButton" name="radioButton_1">
+         <property name="geometry">
+          <rect>
+           <x>10</x>
+           <y>20</y>
+           <width>100</width>
+           <height>20</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>Yes</string>
+         </property>
+        </widget>
+        <widget class="QRadioButton" name="radioButton_2">
+         <property name="geometry">
+          <rect>
+           <x>10</x>
+           <y>40</y>
+           <width>100</width>
+           <height>20</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>No</string>
+         </property>
+        </widget>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="overwrite_mask">
+     <property name="text">
+      <string>Save Outline (Segmentation)</string>
+     </property>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>ctkCollapsibleButton</class>
+   <extends>QWidget</extends>
+   <header>ctkCollapsibleButton.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>qMRMLWidget</class>
+   <extends>QWidget</extends>
+   <header>qMRMLWidget.h</header>
+   <container>1</container>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections/>
+</ui>

@@ -1,0 +1,5 @@
+2025-10-23 13:58:03,004 INFO: Found mappings between files and masks
+2025-10-23 13:58:03,016 INFO: No mask provided for sub-pixar008_T1w/sub-pixar008_T1w.nii.gz
+2025-10-23 13:58:03,016 INFO: No mask provided for sub-pixar009_T1w.nii.gz
+2025-10-23 13:58:03,017 INFO: No mask provided for sub-pixar0010_T1w.nii.gz
+2025-10-23 13:58:03,017 INFO: Total Images Loaded: 3, Images with Masks: 3
