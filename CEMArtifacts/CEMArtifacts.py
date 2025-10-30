@@ -28,7 +28,7 @@ except:
     import numpy as np
     import SimpleITK as sitk
 #
-# CEMArtifacts
+# SegmentationReview
 #
 #remove warnings
 import warnings
@@ -41,7 +41,7 @@ class CEMArtifacts(ScriptedLoadableModule):
 
     def __init__(self, parent):
         ScriptedLoadableModule.__init__(self, parent)
-        self.parent.title = "CEMArtifacts"  
+        self.parent.title = "CEM Artifacts review"  
         self.parent.categories = ["Examples"]  
         self.parent.dependencies = []  
         self.parent.contributors = ["Donna Hooft;Valentina Corbetta"]  
@@ -104,10 +104,6 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         uiWidget = slicer.util.loadUI(self.resourcePath('UI/CEMArtifacts.ui'))
         # --- Enable/disable artifact checkboxes based on Yes/No selection ---
         
-# --------------------------------------------------------------------
-
-
-        #CHANGE THIS UI FOR OWN NEED/ INPUTS
         
         # Layout within the collapsible button
         parametersCollapsibleButton = ctk.ctkCollapsibleButton()
@@ -116,9 +112,9 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         self.layout.addWidget(uiWidget)
         self.ui = slicer.util.childWidgetVariables(uiWidget)
-        self.ui.radioButton_1.toggled.connect(self.updateCheckboxVisibility)
-        self.ui.radioButton_2.toggled.connect(self.updateCheckboxVisibility)
-        self.updateCheckboxVisibility()  # initialize multiselect checkboxes
+        # self.ui.radioButton_1.toggled.connect(self.updateCheckboxVisibility)
+        # self.ui.radioButton_2.toggled.connect(self.updateCheckboxVisibility)
+        # self.updateCheckboxVisibility()  # initialize multiselect checkboxes
 
         parametersFormLayout = qt.QFormLayout(parametersCollapsibleButton)
 
@@ -175,10 +171,6 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Make sure parameter node is initialized (needed for module reload)
         #self.initializeParameterNode()
 
-    def updateCheckboxVisibility(self):
-        enabled = self.ui.radioButton_1.isChecked()  # enable only if "Yes" selected
-        for i in range(1, 7):  # assuming 6 checkboxes
-            getattr(self.ui, f"checkBox_{i}").setEnabled(enabled)
 
     def _createSegmentEditorWidget_(self): #this parts creates the segmentation bubblw and corresponding features
         """Create and initialize a customize Slicer Editor which contains just some the tools that we need for the segmentation"""
@@ -236,6 +228,12 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 self.segmentEditorWidget.setSourceVolumeNodeID(self.sourceVolumeNodeID)
         self.initializeParameterNode()
     
+    def updateCheckboxVisibility(self):
+        enabled = self.ui.radioButton_1.isChecked()  # enable only if "Yes" selected
+        for i in range(1, 7):  # assuming 6 checkboxes
+            getattr(self.ui, f"checkBox_{i}").setEnabled(enabled)
+
+
     def overwrite_mask_clicked(self):
         # overwrite self.segmentEditorWidget.segmentationNode()
         self.segmentation_node = slicer.mrmlScene.GetFirstNodeByClass('vtkMRMLSegmentationNode')
@@ -843,3 +841,13 @@ class SlicerLikertDLratingTest(ScriptedLoadableModuleTest):
         self.delayDisplay("Starting the test")
 
         self.delayDisplay('Test passed')
+
+# At the very end of CEMArtifacts.py, add:
+if __name__ == "__main__":
+    import sys
+    
+    # Instantiate and show the module widget
+    parent = slicer.qMRMLWidget()
+    parent.show()
+    widget = CEMArtifactsWidget(parent)
+    widget.setup()

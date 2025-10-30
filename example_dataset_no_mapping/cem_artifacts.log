@@ -1,0 +1,5 @@
+2025-10-29 18:23:55,842 INFO: No mappings between files and masks
+2025-10-29 18:23:55,843 INFO: No mask for sub-pixar009_T1w.nii.gz
+2025-10-29 18:23:55,843 INFO: No mask for sub-pixar008_T1w.nii.gz
+2025-10-29 18:23:55,843 INFO: No mask for sub-pixar007_T1w.nii.gz
+2025-10-29 18:23:55,843 INFO: Total Images Loaded: 3, Images with Masks: 3

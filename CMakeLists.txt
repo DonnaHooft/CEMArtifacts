@@ -5,7 +5,7 @@ project(CEMArtifacts)
 #-----------------------------------------------------------------------------
 # Extension meta-information
 set(EXTENSION_HOMEPAGE "https://github.com/zapaishchykova/SegmentationReview")
-set(EXTENSION_CATEGORY "Segmentation")
+set(EXTENSION_CATEGORY "Examples")
 set(EXTENSION_CONTRIBUTORS "Donna Hooft (NKI, Watt group), Valentina Corbetta (NKI, Regina Beets Tan group)")
 set(EXTENSION_DESCRIPTION "TSlicer extension for assessing artifacts on CEM images.")
 set(EXTENSION_ICONURL "https://raw.githubusercontent.com/DonnaHooft/CEMArtifacts/main/CEMArtifacts.png")

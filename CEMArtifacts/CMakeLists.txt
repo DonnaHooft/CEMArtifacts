@@ -1,9 +1,10 @@
 #-----------------------------------------------------------------------------
 set(MODULE_NAME CEMArtifacts)
-
+set(MODULE_TITLE "CEM Artifacts Review")
+set(MODULE_CATEGORY "Examples")
 #-----------------------------------------------------------------------------
 set(MODULE_PYTHON_SCRIPTS
-  ${MODULE_NAME}.py
+  CEMArtifacts.py
   )
 
 set(MODULE_PYTHON_RESOURCES
@@ -14,10 +15,12 @@ set(MODULE_PYTHON_RESOURCES
 #-----------------------------------------------------------------------------
 slicerMacroBuildScriptedModule(
   NAME ${MODULE_NAME}
+  CATEGORY ${MODULE_CATEGORY}
+  TITLE ${MODULE_TITLE}
   SCRIPTS ${MODULE_PYTHON_SCRIPTS}
   RESOURCES ${MODULE_PYTHON_RESOURCES}
   WITH_GENERIC_TESTS
-  )
+  ) 
 
 #-----------------------------------------------------------------------------
 if(BUILD_TESTING)
