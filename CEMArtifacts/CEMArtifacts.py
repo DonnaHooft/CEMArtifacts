@@ -112,9 +112,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         self.layout.addWidget(uiWidget)
         self.ui = slicer.util.childWidgetVariables(uiWidget)
-        # self.ui.radioButton_1.toggled.connect(self.updateCheckboxVisibility)
-        # self.ui.radioButton_2.toggled.connect(self.updateCheckboxVisibility)
-        # self.updateCheckboxVisibility()  # initialize multiselect checkboxes
+
 
         parametersFormLayout = qt.QFormLayout(parametersCollapsibleButton)
 
@@ -164,6 +162,10 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Create a new segment editor widget and add it to the NiftyViewerWidget
         self._createSegmentEditorWidget_()
         
+        self.ui.radioButton_1.toggled.connect(self.updateCheckboxVisibility)
+        self.ui.radioButton_2.toggled.connect(self.updateCheckboxVisibility)
+        self.updateCheckboxVisibility()  # initialize multiselect checkboxes
+        
         #self.segmentEditorWidgetWidget.volumes.collapsed = True
          # Set parameter node first so that the automatic selections made when the scene is set are saved
             
@@ -196,7 +198,11 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             'Islands','Logical operators',
             'Mask volume'])
         self.layout.addWidget(self.segmentEditorWidget) 
-        
+
+        # Hide the segmentation editor by default
+        self.segmentEditorWidget.setVisible(False)
+        # artifact_present = self.ui.radioButton_1.isChecked()
+        # self.segmentEditorWidget.setVisible(artifact_present)
         # Observe editor effect registrations to make sure that any effects that are registered
         # later will show up in the segment editor widget. For example, if Segment Editor is set
         # as startup module, additional effects are registered after the segment editor widget is created.
@@ -229,10 +235,21 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.initializeParameterNode()
     
     def updateCheckboxVisibility(self):
-        enabled = self.ui.radioButton_1.isChecked()  # enable only if "Yes" selected
-        for i in range(1, 7):  # assuming 6 checkboxes
-            getattr(self.ui, f"checkBox_{i}").setEnabled(enabled)
+        # Show the artifact selection group only when "Yes" is selected
+        artifact_present = self.ui.radioButton_1.isChecked()
+        self.ui.buttongroup.setVisible(artifact_present)
+        
+        # Optional: Also enable/disable checkboxes for extra safety
+        for i in range(1, 7):
+            getattr(self.ui, f"checkBox_{i}").setEnabled(artifact_present)
 
+        # Show/hide the segmentation editor widget
+        self.segmentEditorWidget.setVisible(artifact_present)  # <-- THIS LINE WAS MISSING!
+        
+        # Show/hide the "Save Outline" button
+        self.ui.overwrite_mask.setVisible(artifact_present)
+        
+       
 
     def overwrite_mask_clicked(self):
         # overwrite self.segmentEditorWidget.segmentationNode()
