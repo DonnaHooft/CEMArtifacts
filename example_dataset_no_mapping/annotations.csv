@@ -1,0 +1,10 @@
+sub-pixar009_T1w.nii.gz,No artifact,,,No mask found
+sub-pixar008_T1w copy 2.nii.gz,"Air Trapping, Implant",Comment1,,No mask found
+sub-pixar009_T1w copy 2.nii.gz,"Air Trapping, Implant",,,No mask found
+sub-pixar007_T1w copy.nii.gz,No artifact,,,No mask found
+sub-pixar008_T1w copy.nii.gz,"Breast in Breast, Ripple (Motion Artifact)",,,No mask found
+sub-pixar008_T1w.nii.gz,"Breast in Breast, Ripple (Motion Artifact)",,,No mask found
+sub-pixar007_T1w copy 2.nii.gz,Implant,"comment2
+",,No mask found
+sub-pixar007_T1w.nii.gz,Implant,,,No mask found
+sub-pixar009_T1w copy.nii.gz,No artifact,,,No mask found

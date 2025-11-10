@@ -1,0 +1,26 @@
+2025-11-05 13:37:11,181 INFO: No mask provided for sub-pixar008_T1w/sub-pixar008_T1w.nii.gz
+2025-11-05 13:37:11,181 INFO: No mask provided for sub-pixar008_sag_T1w.nii.gz
+2025-11-05 13:37:11,182 INFO: No mask provided for sub-pixar0010_T1w0.nii.gz
+2025-11-05 13:37:11,182 INFO: No mask provided for sub-pixar0010_T1w1.nii.gz
+2025-11-05 13:37:11,182 INFO: No mask provided for sub-pixar0010_T1w2.nii.gz
+2025-11-05 13:37:11,182 INFO: No mask provided for sub-pixar009_T1w.nii.gz
+2025-11-05 13:37:11,182 INFO: Total Images Loaded: 9, Images with Masks: 9
+2025-11-05 13:40:23,341 INFO: No mappings between files and masks
+2025-11-05 13:40:23,342 INFO: No mask for sub-pixar009_T1w.nii.gz
+2025-11-05 13:40:23,342 INFO: No mask for sub-pixar008_T1w.nii.gz
+2025-11-05 13:40:23,342 INFO: No mask for sub-pixar007_T1w.nii.gz
+2025-11-05 13:40:23,346 INFO: Found session, restoring annotations 6 files left
+2025-11-05 13:40:23,346 INFO: Total Images Loaded: 6, Images with Masks: 6
+2025-11-05 13:45:47,361 INFO: No mask provided for sub-pixar008_T1w/sub-pixar008_T1w.nii.gz
+2025-11-05 13:45:47,361 INFO: No mask provided for sub-pixar008_sag_T1w.nii.gz
+2025-11-05 13:45:47,361 INFO: No mask provided for sub-pixar0010_T1w0.nii.gz
+2025-11-05 13:45:47,361 INFO: No mask provided for sub-pixar0010_T1w1.nii.gz
+2025-11-05 13:45:47,361 INFO: No mask provided for sub-pixar0010_T1w2.nii.gz
+2025-11-05 13:45:47,362 INFO: No mask provided for sub-pixar009_T1w.nii.gz
+2025-11-05 13:45:47,364 INFO: Found session, restoring annotations 0 files left
+2025-11-05 13:45:47,364 INFO: Total Images Loaded: 0, Images with Masks: 0
+2025-11-05 13:45:52,545 INFO: No mappings between files and masks
+2025-11-05 13:45:52,546 INFO: No mask for sub-pixar009_T1w.nii.gz
+2025-11-05 13:45:52,546 INFO: No mask for sub-pixar008_T1w.nii.gz
+2025-11-05 13:45:52,546 INFO: No mask for sub-pixar007_T1w.nii.gz
+2025-11-05 13:45:52,546 INFO: Total Images Loaded: 3, Images with Masks: 3

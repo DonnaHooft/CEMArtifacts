@@ -164,7 +164,21 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         
         self.ui.radioButton_1.toggled.connect(self.updateCheckboxVisibility)
         self.ui.radioButton_2.toggled.connect(self.updateCheckboxVisibility)
+        # --- Both Save buttons trigger the same action ---
+        self.ui.save_and_next.clicked.connect(self.save_and_next_clicked)
+        self.ui.quick_save_and_next.clicked.connect(self.save_and_next_clicked)
+
+        # --- Keyboard shortcut for both (Ctrl/Command + Return) ---
+        save_shortcut = qt.QShortcut(qt.QKeySequence("Ctrl+Return"), self.parent)
+        save_shortcut.activated.connect(self.save_and_next_clicked)
+
+        # macOS command key version
+        save_shortcut_mac = qt.QShortcut(qt.QKeySequence("Meta+Return"), self.parent)
+        save_shortcut_mac.activated.connect(self.save_and_next_clicked)
+
         self.updateCheckboxVisibility()  # initialize multiselect checkboxes
+        
+
         
         #self.segmentEditorWidgetWidget.volumes.collapsed = True
          # Set parameter node first so that the automatic selections made when the scene is set are saved
@@ -240,7 +254,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.buttongroup.setVisible(artifact_present)
         
         # Optional: Also enable/disable checkboxes for extra safety
-        for i in range(1, 7):
+        for i in range(1, 8):
             getattr(self.ui, f"checkBox_{i}").setEnabled(artifact_present)
 
         # Show/hide the segmentation editor widget
@@ -248,6 +262,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         
         # Show/hide the "Save Outline" button
         self.ui.overwrite_mask.setVisible(artifact_present)
+        self.ui.quick_save_and_next.setVisible(self.ui.radioButton_2.isChecked())
         
        
 
@@ -525,7 +540,8 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             3: "Air Trapping",
             4: "Ripple (Motion Artifact)",
             5: "Contrast Splatter",
-            6: "Implant"
+            6: "Implant",
+            7: "Other"
         }
         return ", ".join([mapping[i] for i in artifact_ids])
     #DO these have to be ina ccordance iwht button from .ui? ie or is labels for csv files?
@@ -551,7 +567,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         else:
             # Collect all selected checkboxes
             artifact_list = []
-            for i in range(1, 7):  # checkBox_1 ... checkBox_6
+            for i in range(1, 8):  # checkBox_1 ... checkBox_6
                 checkbox = getattr(self.ui, f"checkBox_{i}")
                 if checkbox.isChecked():
                     artifact_list.append(i)

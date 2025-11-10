@@ -29,7 +29,7 @@
         <property name="minimumSize">
          <size>
           <width>0</width>
-          <height>150</height>
+          <height>170</height>
          </size>
         </property>
         <property name="visible">
@@ -116,6 +116,19 @@
           <string>6 - Implant</string>
          </property>
         </widget>
+        <widget class="QCheckBox" name="checkBox_7">
+         <property name="geometry">
+          <rect>
+           <x>10</x>
+           <y>140</y>
+           <width>151</width>
+           <height>20</height>
+          </rect>
+         </property>
+         <property name="text">
+          <string>7 - Other</string>
+         </property>
+        </widget>
        </widget>
       </item>
       <item row="11" column="0">
@@ -126,8 +139,21 @@
        </widget>
       </item>
       <item row="12" column="0">
-       <widget class="QPlainTextEdit" name="comment"/>
-      </item>
+        <widget class="QPlainTextEdit" name="comment">
+         <property name="maximumSize">
+          <size>
+            <width>16777215</width>
+            <height>100</height>
+          </size>
+         </property>
+         <property name="minimumSize">
+          <size>
+            <width>0</width>
+            <height>60</height>
+          </size>
+        </property>
+        </widget>
+       </item>
       <item row="13" column="0">
        <widget class="QPushButton" name="save_and_next">
         <property name="text">
@@ -143,7 +169,7 @@
         <property name="minimumSize">
          <size>
           <width>0</width>
-          <height>70</height>
+          <height>65</height>
          </size>
         </property>
         <property name="title">
@@ -175,6 +201,19 @@
           <string>No</string>
          </property>
         </widget>
+       </widget>
+      </item>
+      <item>
+      <widget class="QPushButton" name="quick_save_and_next">
+        <property name="text">
+         <string>Save,  Open Next</string>
+        </property>
+        <property name="shortcut">
+         <string>Ctrl+Return</string>
+        </property>
+        <property name="visible">
+         <bool>false</bool>
+        </property>
        </widget>
       </item>
      </layout>
