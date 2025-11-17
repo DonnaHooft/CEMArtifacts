@@ -79,3 +79,14 @@
 2025-11-05 13:51:09,071 INFO: No mask for sub-pixar007_T1w.nii.gz
 2025-11-05 13:51:09,071 INFO: No mask for sub-pixar009_T1w copy.nii.gz
 2025-11-05 13:51:09,071 INFO: Total Images Loaded: 9, Images with Masks: 9
+2025-11-17 10:02:24,575 INFO: No mappings between files and masks
+2025-11-17 10:02:24,576 INFO: No mask for sub-pixar009_T1w.nii.gz
+2025-11-17 10:02:24,577 INFO: No mask for sub-pixar008_T1w copy 2.nii.gz
+2025-11-17 10:02:24,577 INFO: No mask for sub-pixar009_T1w copy 2.nii.gz
+2025-11-17 10:02:24,577 INFO: No mask for sub-pixar007_T1w copy.nii.gz
+2025-11-17 10:02:24,577 INFO: No mask for sub-pixar008_T1w copy.nii.gz
+2025-11-17 10:02:24,577 INFO: No mask for sub-pixar008_T1w.nii.gz
+2025-11-17 10:02:24,577 INFO: No mask for sub-pixar007_T1w copy 2.nii.gz
+2025-11-17 10:02:24,577 INFO: No mask for sub-pixar007_T1w.nii.gz
+2025-11-17 10:02:24,577 INFO: No mask for sub-pixar009_T1w copy.nii.gz
+2025-11-17 10:02:24,577 INFO: Total Images Loaded: 9, Images with Masks: 9

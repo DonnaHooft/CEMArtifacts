@@ -57,6 +57,29 @@ This file was developed by Donna Hooft based on a github repository created by A
 #
 # CEMArtifactsWidget
 #
+class CEMArtifacts(ScriptedLoadableModule):
+    """Uses ScriptedLoadableModule base class, available at:
+    https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
+    """
+
+    def __init__(self, parent):
+        ScriptedLoadableModule.__init__(self, parent)
+        self.parent.title = "CEM Artifacts review"  
+        self.parent.categories = ["Examples"]  
+        self.parent.dependencies = []  
+        self.parent.contributors = ["Donna Hooft;Valentina Corbetta"]  
+        self.parent.helpText = """
+Slicer3D extension for assesing presence of artifacts on recombined Contrast Enhanced Mammography (CEM) images and 
+for segmentation of Artifacts which are not locally bound.
+       """
+        self.parent.acknowledgementText = """
+This file was developed by Donna Hooft based on a github repository created by Anna Zapaishchykova and Vasco Prudente. 
+"""
+       
+
+#
+# CEMArtifactsWidget
+#
 
 class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     """Uses ScriptedLoadableModuleWidget base class, available at:
@@ -291,7 +314,9 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         return os.path.join(os.sep, rootdir+os.sep,targetdir)
 
     def _is_valid_extension(self, path):
-        return any(path.endswith(i) for i in [".nii", ".nii.gz", ".nrrd"])
+        valid = [".nii", ".nii.gz", ".nrrd", ".jpg", ".jpeg", ".png"]
+        return any(path.lower().endswith(ext) for ext in valid)
+
     
     def _construct_full_path(self, path):
         if os.path.isabs(path):
@@ -486,24 +511,53 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 # ToDo: write to log how many files were found, how many masks were found 
                 
                 
-        # case 2: mapper cvs is not present; list files from file
+    
+        # case 2: no mapper found → detect images + DICOM
         else:
-            logger.info('No mappings between files and masks') 
-            #print("No mappings between files and masks")
+            logger.info('No mappings between files and masks')
+
+            # 1) Add individual DICOM files (each .dcm file is its own item)
+            for root, _, files in os.walk(directory):
+                for f in files:
+                    if f.lower().endswith(".dcm"):
+                        dcm_path = os.path.join(root, f)
+                        self.nifti_files.append(dcm_path)
+                        self.segmentation_files.append("")   # no mask by default
+                        self.seg_mask_status.append(0)
+                        logger.info(f"Found DICOM file: {dcm_path}")
+
+
+            # 2) Add flat images (nii, nrrd, jpg, png)
             for file in os.listdir(directory):
-                if ".nii" in file and "_mask" not in file:  
-                    self.nifti_files.append(self.joinpath(directory,file)) #
-                    
-                    if os.path.exists(self.joinpath(directory,file.split(".")[0]+"_mask.nii.gz")):
-                        self.segmentation_files.append(self.joinpath(directory,file.split(".")[0]+"_mask.nii.gz"))
-                        self.seg_mask_status.append(2) # 0 - no mask, 1 - mask path, cannot load , 2 - mask loaded
-                        logger.info(f'Found mask for {file}')
+                full_path = self.joinpath(directory, file)
+
+                # skip subdirs (handled in DICOM)
+                if os.path.isdir(full_path):
+                    continue
+
+                # check image extension
+                if self._is_valid_extension(file) and "_mask" not in file:
+                    self.nifti_files.append(full_path)
+
+                    base = os.path.splitext(file)[0]
+                    possible_masks = [
+                        self.joinpath(directory, base + "_mask.nrrd"),
+                        self.joinpath(directory, base + "_mask.nii.gz"),
+                        self.joinpath(directory, base + "_mask.nii")
+                    ]
+
+                    mask_found = next((m for m in possible_masks if os.path.exists(m)), None)
+
+                    if mask_found:
+                        self.segmentation_files.append(mask_found)
+                        self.seg_mask_status.append(2)
+                        logger.info(f"Found mask for {file}")
                     else:
                         self.segmentation_files.append("")
-                        self.seg_mask_status.append(0) # 0 - no mask, 1 - mask path, cannot load , 2 - mask loaded
-                        logger.info(f'No mask for {file}')
-                #else:
-                #    logger.info(f'File {file} does not exist or has wrong extension, skipping')
+                        self.seg_mask_status.append(0)
+                        logger.info(f"No mask for {file}")
+
+
                         
         self.current_index = 0               
         # load the .cvs file with the old annotations or create a new one
@@ -528,8 +582,11 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         logger.info( f'Total Images Loaded: {len(self.nifti_files)}, Images with Masks: {len(self.segmentation_files)}')
         
         # load first file with mask
-        self.load_nifti_file(self.unique_case_flag)
-     
+        self.load_image_file(self.unique_case_flag)
+
+     # ______________________________________________________________________________________________________________________________________ ___________________________________________________________________ 
+
+# 
     def _numerical_status_to_str(self, status):
         return {0: "No mask found", 1: "Cannot load mask", 2: "Mask loaded, no edits", 3:"Mask edited"}[status]   
     
@@ -614,7 +671,8 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 while ret == 0 and self.current_index <= self.n_files:#-1:
                     self.current_index += 1
                     
-                    ret = self.load_nifti_file(unique=True)
+                    ret = self.load_image_file()
+
                     #print("skip, load next",self.id_subs[self.current_index])
                     
                     if self.current_index == self.n_files:
@@ -627,7 +685,8 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                     
             else:
                 self.current_index += 1
-                self.load_nifti_file()
+                self.load_image_file()
+
 
             self.ui.comment.setPlainText("")
             self.ui.status_checked.setText("Checked: "+ str(self.current_index) + " / "+str(self.n_files))
@@ -661,8 +720,37 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.segmentation_node.GetDisplayNode().SetSegmentVisibility(segment_id, visibility)
 
 
-    def load_nifti_file(self, unique=False): #adjust for dicoms anf correct noation 
-        """Load NIFTI file and associated segmentation."""
+    def _load_single_dicom(self, path): #helper fucntion for loading single dicom files manually - adjsut for different directory strcuture 
+
+        try:
+            ds = pydicom.dcmread(path)
+
+            if "PixelData" not in ds:
+                raise ValueError("No pixel data in DICOM")
+
+            img = ds.pixel_array.astype(np.float32)
+
+            # Create Slicer node
+            volumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
+            slicer.util.updateVolumeFromArray(volumeNode, img)
+
+            # Spacing
+            if hasattr(ds, "PixelSpacing"):
+                spacing = list(map(float, ds.PixelSpacing)) + [1.0]
+                volumeNode.SetSpacing(spacing)
+
+            volumeNode.SetName(os.path.basename(path))
+
+            return volumeNode
+
+        except Exception as e:
+            logging.getLogger('CEMArtifacts').error(f"Error loading DICOM manually: {e}")
+            return None
+
+
+
+    def load_image_file(self, unique=False):
+        """Load NIFTI, NRRD, DICOM, or image file and associated segmentation."""
         for node in [self.volume_node, self.segmentation_node, self.pointListNode, self.segmentEditorWidget.segmentationNode()]:
             if node:
                 slicer.mrmlScene.RemoveNode(node)
@@ -671,29 +759,83 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         if unique:
             if self.current_index < self.n_files and self.id_subs[self.current_index] in self.id_subs_checked:
                 return 0
-            elif self.current_index == self.n_files:
+            elif self.current_index >= self.n_files:
                 return 1
 
-        # Pause rendering until all data is loaded
         slicer.app.layoutManager().setRenderPaused(True)
 
-        self.volume_node = slicer.util.loadVolume(self.nifti_files[self.current_index])
-        # Adjust window/level based on the previous settings, if any.
+        image_path = self.nifti_files[self.current_index]
+        logger = logging.getLogger('CEMArtifacts')
+
+        # Try loading as generic image first (JPG, PNG, TIFF, BMP)
+        # Try loading as generic 2D image (JPG, PNG, TIFF, BMP)
+        if image_path.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif")):
+            try:
+                
+                # Use VTK's factory to choose correct reader (JPEG/PNG/TIFF/etc.)
+                readerFactory = vtk.vtkImageReader2Factory()
+                reader = readerFactory.CreateImageReader2(image_path)
+
+                if reader:
+                    reader.SetFileName(image_path)
+                    reader.Update()
+
+                    # Create a new scalar volume node
+                    self.volume_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLVectorVolumeNode")
+                    self.volume_node.SetAndObserveImageData(reader.GetOutput())
+                    self.volume_node.SetSpacing(1, 1, 1)  # default spacing (unknown)
+                    slicer.util.setSliceViewerLayers(background=self.volume_node)
+
+                    logger.info(f"Loaded 2D image via VTK reader: {image_path}")
+
+                else:
+                    logger.error(f"No VTK reader available for: {image_path}")
+                    self.volume_node = None
+
+            except Exception as e:
+                logger.error(f"Failed to load 2D image using VTK reader: {e}")
+                self.volume_node = None
+
+
+        # Try loading as 3D or 2D medical volume
+        if self.volume_node is None and image_path.lower().endswith((".nii", ".nii.gz", ".nrrd")):
+            try:
+                self.volume_node = slicer.util.loadVolume(image_path)
+                logger.info(f"Loaded NIfTI/NRRD volume: {image_path}")
+            except Exception as e:
+                logger.warning(f"Failed to load NIfTI/NRRD: {e}")
+                self.volume_node = None
+
+        # Try DICOM (manual load of a single file)
+        if self.volume_node is None and image_path.lower().endswith(".dcm"):
+            logger.info(f"Loading DICOM as single image: {image_path}")
+            self.volume_node = self._load_single_dicom(image_path)
+
+
+
+        # If STILL no volume loaded → error
+        if self.volume_node is None:
+            slicer.util.errorDisplay(f"Could not load image: {image_path}")
+            slicer.app.layoutManager().setRenderPaused(False)
+            return 1
+
+        # Adjust window/level
         self.restore_window_level_settings()
         
+        # Load segmentation if available
         try:
-            self.segmentation_node = slicer.util.loadSegmentation(self.segmentation_files[self.current_index])
-            # Restore the segment visibility toggles from the previous segmentation, if any.
-            self.restore_segment_visiblity_states()
-            # Set the segmentation node to the segment editor widget
-            self.set_segmentation_and_mask_for_segmentation_editor()
-        except:
-            if not unique:
-                self.enter()
+            if self.segmentation_files[self.current_index] and \
+            self.segmentation_files[self.current_index].endswith((".nii", ".nrrd", ".nii.gz")):
+                self.segmentation_node = slicer.util.loadSegmentation(
+                    self.segmentation_files[self.current_index]
+                )
+                self.restore_segment_visiblity_states()
+                self.set_segmentation_and_mask_for_segmentation_editor()
+                logger.info(f"Loaded segmentation: {self.segmentation_files[self.current_index]}")
+        except Exception as e:
+            logger.error(f"Failed to load segmentation: {e}")
 
-        # Resume rendering to show the loaded data
         slicer.app.layoutManager().setRenderPaused(False)
-        
         return None
 
     def set_segmentation_and_mask_for_segmentation_editor(self):
@@ -824,8 +966,6 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         wasModified = self._parameterNode.StartModify()  # Modify all properties in a single batch
 
         self._parameterNode.EndModify(wasModified)
-
-#
 # SlicerLikertDLratingLogic
 #
 
