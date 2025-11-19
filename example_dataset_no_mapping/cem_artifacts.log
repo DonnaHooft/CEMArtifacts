@@ -90,3 +90,38 @@
 2025-11-17 10:02:24,577 INFO: No mask for sub-pixar007_T1w.nii.gz
 2025-11-17 10:02:24,577 INFO: No mask for sub-pixar009_T1w copy.nii.gz
 2025-11-17 10:02:24,577 INFO: Total Images Loaded: 9, Images with Masks: 9
+2025-11-17 17:00:18,679 INFO: No mappings between files and masks
+2025-11-17 17:00:18,681 INFO: No mask for sub-pixar009_T1w.nii.gz
+2025-11-17 17:00:18,681 INFO: No mask for sub-pixar008_T1w copy 2.nii.gz
+2025-11-17 17:00:18,681 INFO: No mask for sub-pixar009_T1w copy 2.nii.gz
+2025-11-17 17:00:18,681 INFO: No mask for sub-pixar007_T1w copy.nii.gz
+2025-11-17 17:00:18,681 INFO: No mask for sub-pixar008_T1w copy.nii.gz
+2025-11-17 17:00:18,681 INFO: No mask for t.seg.nrrd
+2025-11-17 17:00:18,681 INFO: No mask for sub-pixar008_T1w.nii.gz
+2025-11-17 17:00:18,681 INFO: No mask for sub-pixar007_T1w copy 2.nii.gz
+2025-11-17 17:00:18,681 INFO: No mask for sub-pixar007_T1w.nii.gz
+2025-11-17 17:00:18,681 INFO: No mask for sub-pixar009_T1w copy.nii.gz
+2025-11-17 17:00:29,902 INFO: No mappings between files and masks
+2025-11-17 17:00:29,903 INFO: No mask for case_002_L_MLO_DES.png
+2025-11-17 17:00:29,903 INFO: No mask for case_001_L_MLO_DES.png
+2025-11-17 17:00:29,903 INFO: No mask for case_002_L_CC_UNK.png
+2025-11-17 17:00:29,903 INFO: No mask for case_002_R_CC_UNK.png
+2025-11-17 17:00:29,903 INFO: No mask for case_002_L_MLO_UNK.png
+2025-11-17 17:00:29,903 INFO: No mask for case_001_R_MLO_LE.png
+2025-11-17 17:00:29,903 INFO: No mask for case_002_L_CC_DES.png
+2025-11-17 17:00:29,904 INFO: No mask for case_002_R_CC_DES.png
+2025-11-17 17:00:29,904 INFO: No mask for case_001_L_MLO_LE.png
+2025-11-17 17:00:29,904 INFO: No mask for case_001_R_MLO_DES.png
+2025-11-17 17:00:29,904 INFO: No mask for case_001_R_CC_LE.png
+2025-11-17 17:00:29,904 INFO: No mask for case_002_R_MLO_DES.png
+2025-11-17 17:00:29,904 INFO: No mask for case_002_L_MLO_LE.png
+2025-11-17 17:00:29,904 INFO: No mask for case_001_R_CC_DES.png
+2025-11-17 17:00:29,904 INFO: No mask for case_001_L_CC_DES.png
+2025-11-17 17:00:29,904 INFO: No mask for case_001_L_CC_LE.png
+2025-11-17 17:00:29,904 INFO: No mask for case_002_R_MLO_LE.png
+2025-11-17 17:00:29,904 INFO: No mask for case_002_L_CC_LE.png
+2025-11-17 17:00:29,905 INFO: No mask for case_001_R_CC_UNK.png
+2025-11-17 17:00:29,905 INFO: No mask for case_002_R_MLO_UNK.png
+2025-11-17 17:00:29,905 INFO: No mask for case_002_R_CC_LE.png
+2025-11-17 17:00:29,905 INFO: Total Images Loaded: 52, Images with Masks: 52
+2025-11-17 17:00:29,985 INFO: Loaded 2D image via VTK reader: /Users/d.hooft/Documents/Local_Code/Artifact_Gui/CEMArtifacts-main/Example_DICOMS_Converted_png/case_002_L_MLO_DES.png
