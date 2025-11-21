@@ -77,6 +77,7 @@ This file was developed by Donna Hooft based on a github repository created by A
 """
        
 
+
 #
 # CEMArtifactsWidget
 #
@@ -112,6 +113,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.pointListNode = None
         self.window_level = None   # To store current window/level settings
         self.segment_visiblity_states = {}  # Dictionary to store the visibility toggle of each segment
+        self._is_loading = False # Flag to prevent re-entrance during loading
 
 
 
@@ -198,6 +200,14 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # macOS command key version
         save_shortcut_mac = qt.QShortcut(qt.QKeySequence("Meta+Return"), self.parent)
         save_shortcut_mac.activated.connect(self.save_and_next_clicked)
+
+
+        # Create real button group for Yes/No
+        self.yesNoGroup = qt.QButtonGroup()
+        self.yesNoGroup.addButton(self.ui.radioButton_1)
+        self.yesNoGroup.addButton(self.ui.radioButton_2)
+        self.yesNoGroup.setExclusive(True)
+
 
         self.updateCheckboxVisibility()  # initialize multiselect checkboxes
         
@@ -310,12 +320,33 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         except:
             pass
 
-    def joinpath(self,rootdir,targetdir):
-        return os.path.join(os.sep, rootdir+os.sep,targetdir)
+    # def joinpath(self,rootdir,targetdir):
+    #     return os.path.join(os.sep, rootdir+os.sep,targetdir)
+    
+    def joinpath(self, rootdir, filename):
+        return os.path.join(rootdir, filename)
+
+
+    # def _is_valid_extension(self, path):
+    #     valid = [".nii", ".nii.gz", ".nrrd", ".jpg", ".jpeg", ".png"]
+    #     return any(path.lower().endswith(ext) for ext in valid)
 
     def _is_valid_extension(self, path):
-        valid = [".nii", ".nii.gz", ".nrrd", ".jpg", ".jpeg", ".png"]
-        return any(path.lower().endswith(ext) for ext in valid)
+        # First check normal image extensions
+        valid_ext = [".nii", ".nii.gz", ".nrrd", ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".dcm"]
+        lower = path.lower()
+
+        if any(lower.endswith(ext) for ext in valid_ext):
+            return True
+
+        # --- Now detect DICOM files with no extension ---
+        try:
+            with open(path, "rb") as f:
+                f.seek(128)
+                is_dicom = f.read(4) == b"DICM"
+            return is_dicom
+        except:
+            return False
 
     
     def _construct_full_path(self, path):
@@ -432,9 +463,12 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             pass
         
         self.unique_case_flag=False
+
+        mapping_unique = os.path.join(directory, "mapping_unique.csv")
+        mapping_file = os.path.join(directory, "mapping.csv")
         # case 0: searching for one unique nifti file for id
         # they 
-        if os.path.exists(self.joinpath(directory,"mapping_unique.csv")):
+        if os.path.isfile(mapping_unique):
             case_flag = True
             # mapping file contains id and nifti file name
             id_subs = []
@@ -475,7 +509,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             #print("Unique:",len(np.unique(self.id_subs)),id_subs)   
         
         # case 1: mapper cvs is present
-        elif os.path.exists(self.joinpath(directory,"mapping.csv")):
+        elif os.path.isfile(mapping_file):
             logger.info('Found mappings between files and masks') 
             #print("Found mappings between files and masks")
             self.mappings = pd.read_csv(self.joinpath(directory,"mapping.csv"))
@@ -515,47 +549,80 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # case 2: no mapper found → detect images + DICOM
         else:
             logger.info('No mappings between files and masks')
+            processed_files = set()
 
+            # for root, _, files in os.walk(directory):
+            #     for f in files:
+            #         if f.lower().endswith(".dcm"):
+            #             dcm_path = os.path.join(root, f)
+            #             self.nifti_files.append(dcm_path)
+            #             self.segmentation_files.append("")   # no mask by default
+            #             self.seg_mask_status.append(0)
+            #             logger.info(f"Found DICOM file: {dcm_path}")
+
+             
             # 1) Add individual DICOM files (each .dcm file is its own item)
             for root, _, files in os.walk(directory):
                 for f in files:
                     if f.lower().endswith(".dcm"):
                         dcm_path = os.path.join(root, f)
+                        
+                        # Skip if already processed
+                        if dcm_path in processed_files:
+                            continue
+                            
+                        processed_files.add(dcm_path)
                         self.nifti_files.append(dcm_path)
-                        self.segmentation_files.append("")   # no mask by default
+                        self.segmentation_files.append("")
                         self.seg_mask_status.append(0)
                         logger.info(f"Found DICOM file: {dcm_path}")
 
 
-            # 2) Add flat images (nii, nrrd, jpg, png)
-            for file in os.listdir(directory):
-                full_path = self.joinpath(directory, file)
 
-                # skip subdirs (handled in DICOM)
+            ## 2) Add flat images (nii, nrrd, jpg, png)
+            for file in os.listdir(directory):
+                print("File:",file)
+                print("Directory:",directory)
+                
+                full_path = os.path.join(directory, file)
+                print("Full path:",full_path)
+
+                # skip subdirs (handled in DICOM walk)
                 if os.path.isdir(full_path):
+                    print("is dir, continues")
                     continue
 
-                # check image extension
-                if self._is_valid_extension(file) and "_mask" not in file:
+                # Only handle image extensions
+                if not self._is_valid_extension(file):
+                    print("not valid extension, continues")
+                    continue  # <-- THIS IS THE FIX
+
+                # Skip mask files
+                if "_mask" in file.lower():
+                    continue
+
+                processed_files.add(full_path)
+                if full_path not in self.nifti_files:
                     self.nifti_files.append(full_path)
 
-                    base = os.path.splitext(file)[0]
-                    possible_masks = [
-                        self.joinpath(directory, base + "_mask.nrrd"),
-                        self.joinpath(directory, base + "_mask.nii.gz"),
-                        self.joinpath(directory, base + "_mask.nii")
-                    ]
 
-                    mask_found = next((m for m in possible_masks if os.path.exists(m)), None)
+                base = os.path.splitext(file)[0]
+                possible_masks = [
+                    os.path.join(directory, base + "_mask.nrrd"),
+                    os.path.join(directory, base + "_mask.nii.gz"),
+                    os.path.join(directory, base + "_mask.nii"),
+                ]
 
-                    if mask_found:
-                        self.segmentation_files.append(mask_found)
-                        self.seg_mask_status.append(2)
-                        logger.info(f"Found mask for {file}")
-                    else:
-                        self.segmentation_files.append("")
-                        self.seg_mask_status.append(0)
-                        logger.info(f"No mask for {file}")
+                mask_found = next((m for m in possible_masks if os.path.exists(m)), None)
+
+                if mask_found:
+                    self.segmentation_files.append(mask_found)
+                    self.seg_mask_status.append(2)
+                    logger.info(f"Found mask for {file}")
+                else:
+                    self.segmentation_files.append("")
+                    self.seg_mask_status.append(0)
+                    logger.info(f"No mask for {file}")
 
 
                         
@@ -605,101 +672,229 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 # ______________________________________________________________________________________________________________________________________ ___________________________________________________________________ 
 
 # 
+    # def save_and_next_clicked(self):
+    #     # Determine if artifact is present
+    #     artifact_present = None
+    #     if self.ui.radioButton_1.isChecked():  # Yes
+    #         artifact_present = True
+    #     elif self.ui.radioButton_2.isChecked():  # No
+    #         artifact_present = False
+
+    #     if artifact_present is None:
+    #         slicer.util.errorDisplay("Please select Yes or No before continuing.")
+    #         return
+
+    #     # If no artifact: save that and move on
+    #     if not artifact_present:
+    #         annotation = "No artifact"
+    #         artifact_list = []
+    #     else:
+    #         # Collect all selected checkboxes
+    #         artifact_list = []
+    #         for i in range(1, 8):  # checkBox_1 ... checkBox_6
+    #             checkbox = getattr(self.ui, f"checkBox_{i}")
+    #             if checkbox.isChecked():
+    #                 artifact_list.append(i)
+
+    #         if not artifact_list:
+    #             slicer.util.warningDisplay("You selected 'Yes' but no artifact type — please choose at least one.")
+    #             return
+
+    #         annotation = self._artifacts_to_str(artifact_list)
+
+    #     # Save comment
+    #     comment_text = self.ui.comment.toPlainText()
+
+    #     # Append to internal list (for memory)
+    #     self.likert_scores.append([self.current_index, annotation, comment_text])
+
+    #     # Save to CSV
+    #     head, tail = os.path.split(self.nifti_files[self.current_index])
+    #     data = {
+    #         'file': [self.nifti_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
+    #         'artifacts': [annotation],
+    #         'other': [comment_text],
+    #         'mask_path': [self.segmentation_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
+    #         'mask_status': [self._numerical_status_to_str(self.seg_mask_status[self.current_index])]
+    #     }
+    #     df = pd.DataFrame(data)
+    #     df.to_csv(self.joinpath(self.directory, "annotations.csv"), mode='a', index=False, header=False)
+
+
+    #         # Store settings before moving to next
+    #     if self.volume_node and self.volume_node.GetDisplayNode():
+    #         self.store_current_window_level_settings()
+        
+    #     if self.segmentation_node:
+    #         self.store_segment_visiblity_states()
+
+    #     # Move to next file
+    #     ret = 0
+    #     if self.current_index < self.n_files - 1:
+    #         if self.unique_case_flag:
+    #             while ret == 0 and self.current_index < self.n_files - 1:
+    #                 self.current_index += 1
+    #                 ret = self.load_image_file(unique=True)
+    #                 if self.current_index >= self.n_files - 1:
+    #                     print("*All files checked", self.current_index, self.n_files)
+    #                     self.finish_flag = True
+    #                     break
+    #         else:
+    #             self.current_index += 1
+    #             self.load_image_file(unique=False)
+
+    #         self.ui.comment.setPlainText("")
+    #         self.ui.status_checked.setText("Checked: " + str(self.current_index) + " / " + str(self.n_files))
+    #     else:
+    #         print("All files checked")
+    #         self.finish_flag = True
+
     def save_and_next_clicked(self):
-        # Determine if artifact is present
-        artifact_present = None
-        if self.ui.radioButton_1.isChecked():  # Yes
-            artifact_present = True
-        elif self.ui.radioButton_2.isChecked():  # No
-            artifact_present = False
 
-        if artifact_present is None:
-            slicer.util.errorDisplay("Please select Yes or No before continuing.")
+        # Prevent re-entry (double clicks, UI event glitches)
+        if self._is_loading:
             return
+        self._is_loading = True
 
-        # If no artifact: save that and move on
-        if not artifact_present:
-            annotation = "No artifact"
-            artifact_list = []
-        else:
-            # Collect all selected checkboxes
-            artifact_list = []
-            for i in range(1, 8):  # checkBox_1 ... checkBox_6
-                checkbox = getattr(self.ui, f"checkBox_{i}")
-                if checkbox.isChecked():
-                    artifact_list.append(i)
+        try:
+            
+            # 1. Detect artifact state
+            artifact_present = None
+            if self.ui.radioButton_1.isChecked():  # Yes
+                artifact_present = True
+            elif self.ui.radioButton_2.isChecked():  # No
+                artifact_present = False
 
-            if not artifact_list:
-                slicer.util.warningDisplay("You selected 'Yes' but no artifact type — please choose at least one.")
+            if artifact_present is None:
+                # slicer.util.errorDisplay("Please select Yes or No before continuing.")
+                return
+            
+            # 2. Build annotation string
+            
+            if not artifact_present:
+                annotation = "No artifact"
+                artifact_list = []
+            else:
+                artifact_list = []
+                for i in range(1, 8):
+                    checkbox = getattr(self.ui, f"checkBox_{i}")
+                    if checkbox.isChecked():
+                        artifact_list.append(i)
+
+                if not artifact_list:
+                    slicer.util.warningDisplay(
+                        "You selected 'Yes' but no artifact type — please choose at least one."
+                    )
+                    return
+
+                annotation = self._artifacts_to_str(artifact_list)
+
+            
+            # 3. Save comment
+            comment_text = self.ui.comment.toPlainText()
+            self.likert_scores.append([self.current_index, annotation, comment_text])
+
+            
+            # 4. Append to CSV
+            head, tail = os.path.split(self.nifti_files[self.current_index])
+            data = {
+                'file': [self.nifti_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
+                'artifacts': [annotation],
+                'other': [comment_text],
+                'mask_path': [self.segmentation_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
+                'mask_status': [self._numerical_status_to_str(self.seg_mask_status[self.current_index])]
+            }
+
+            df = pd.DataFrame(data)
+            df.to_csv(self.joinpath(self.directory, "annotations.csv"),
+                    mode='a', index=False, header=False)
+
+            
+            # 5. Store window/level + visibility state
+            if self.volume_node and self.volume_node.GetDisplayNode():
+                self.store_current_window_level_settings()
+
+            if self.segmentation_node:
+                self.store_segment_visiblity_states()
+
+            
+            # 6. COMPUTE NEXT INDEX SAFELY
+            if self.current_index >= self.n_files - 1:
+                print("All files checked")
+                self.finish_flag = True
                 return
 
-            annotation = self._artifacts_to_str(artifact_list)
-
-        # Save comment
-        comment_text = self.ui.comment.toPlainText()
-
-        # Append to internal list (for memory)
-        self.likert_scores.append([self.current_index, annotation, comment_text])
-
-        # Save to CSV
-        head, tail = os.path.split(self.nifti_files[self.current_index])
-        data = {
-            'file': [self.nifti_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
-            'artifacts': [annotation],
-            'other': [comment_text],
-            'mask_path': [self.segmentation_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
-            'mask_status': [self._numerical_status_to_str(self.seg_mask_status[self.current_index])]
-        }
-        df = pd.DataFrame(data)
-        df.to_csv(self.joinpath(self.directory, "annotations.csv"), mode='a', index=False, header=False)
-
-
-        # go to the next file if there is one
-        ret = 0
-        if self.current_index <= self.n_files:#-1:
-            if self.volume_node:
-                # Store current window and level
-                self.store_current_window_level_settings()
-                slicer.mrmlScene.RemoveNode(self.volume_node)
-            if self.segmentation_node:
-                # Store current mask label visibility states
-                self.store_segment_visiblity_states()
-                slicer.mrmlScene.RemoveNode(self.segmentation_node)
-                slicer.mrmlScene.RemoveNode(self.pointListNode)
-                #slicer.mrmlScene.Clear(0)
+            # Unique mode → skip already checked subjects
             if self.unique_case_flag:
-                while ret == 0 and self.current_index <= self.n_files:#-1:
-                    self.current_index += 1
-                    
-                    ret = self.load_image_file()
+                next_index = self.current_index + 1
 
-                    #print("skip, load next",self.id_subs[self.current_index])
-                    
-                    if self.current_index == self.n_files:
-                    
-                        print("*All files checked", self.current_index, self.n_files)
-                        self.finish_flag = True
-                        break
-                    
-                    #self.current_index += 1
-                    
+                while (
+                    next_index < self.n_files
+                    and self.id_subs[next_index] in self.id_subs_checked
+                ):
+                    next_index += 1
+
+                if next_index >= self.n_files:
+                    print("All files checked")
+                    self.finish_flag = True
+                    return
+
+                self.current_index = next_index
+
+            # Normal mode
             else:
                 self.current_index += 1
-                self.load_image_file()
+
+            
+            # 7. RESET UI BEFORE LOADING NEXT IMAGE
+            # reset artifacts
+            for i in range(1, 8):
+                getattr(self.ui, f"checkBox_{i}").setChecked(False)
+                
+            ## Reset Yes/No radio buttons safely
+            self.yesNoGroup.setExclusive(False)
+
+            self.ui.radioButton_1.setChecked(False)
+            self.ui.radioButton_2.setChecked(False)
+            self.ui.comment.clear()
 
 
-            self.ui.comment.setPlainText("")
-            self.ui.status_checked.setText("Checked: "+ str(self.current_index) + " / "+str(self.n_files))
+            slicer.app.processEvents()
 
-        else:
-            #print("_All files checked")
-            self.finish_flag = True
+            self.yesNoGroup.setExclusive(True)
+
+            slicer.app.processEvents()
+            
+            # 8. LOAD NEXT IMAGE EXACTLY ONCE
+            if self.unique_case_flag:
+                self.load_image_file(unique=True)
+            else:
+                self.load_image_file(unique=False)
+
+            
+            # 9. Update progress label
+            self.ui.status_checked.setText(
+                f"Checked: {self.current_index} / {self.n_files}"
+            )
+
+        finally:
+            # Ensure unlock even if an exception happens
+            self._is_loading = False
+
+
+
 
     def store_current_window_level_settings(self):
         """Store current HU window and level settings."""
         self.window_level = (self.volume_node.GetDisplayNode().GetWindow(), self.volume_node.GetDisplayNode().GetLevel())
 
     def restore_window_level_settings(self):
+        if not self.volume_node: #added this as recommendation
+            return
+
+        if not self.volume_node.GetDisplayNode(): #added this as recommendation
+            return
+        
         if self.window_level is not None:
             self.volume_node.GetDisplayNode().SetAutoWindowLevel(False)
             self.volume_node.GetDisplayNode().SetWindow(self.window_level[0])
@@ -720,123 +915,234 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.segmentation_node.GetDisplayNode().SetSegmentVisibility(segment_id, visibility)
 
 
-    def _load_single_dicom(self, path): #helper fucntion for loading single dicom files manually - adjsut for different directory strcuture 
-
-        try:
-            ds = pydicom.dcmread(path)
-
-            if "PixelData" not in ds:
-                raise ValueError("No pixel data in DICOM")
-
-            img = ds.pixel_array.astype(np.float32)
-
-            # Create Slicer node
-            volumeNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
-            slicer.util.updateVolumeFromArray(volumeNode, img)
-
-            # Spacing
-            if hasattr(ds, "PixelSpacing"):
-                spacing = list(map(float, ds.PixelSpacing)) + [1.0]
-                volumeNode.SetSpacing(spacing)
-
-            volumeNode.SetName(os.path.basename(path))
-
-            return volumeNode
-
-        except Exception as e:
-            logging.getLogger('CEMArtifacts').error(f"Error loading DICOM manually: {e}")
-            return None
-
-
 
     def load_image_file(self, unique=False):
         """Load NIFTI, NRRD, DICOM, or image file and associated segmentation."""
-        for node in [self.volume_node, self.segmentation_node, self.pointListNode, self.segmentEditorWidget.segmentationNode()]:
-            if node:
-                slicer.mrmlScene.RemoveNode(node)
-        slicer.util.resetSliceViews()
         
+        # Check if we should skip this file (for unique mode)
         if unique:
             if self.current_index < self.n_files and self.id_subs[self.current_index] in self.id_subs_checked:
                 return 0
             elif self.current_index >= self.n_files:
                 return 1
 
-        slicer.app.layoutManager().setRenderPaused(True)
-
-        image_path = self.nifti_files[self.current_index]
         logger = logging.getLogger('CEMArtifacts')
+        image_path = self.nifti_files[self.current_index]
+        
+        # CRITICAL: Pause rendering and properly clean up before loading new content
+        slicer.app.layoutManager().setRenderPaused(True)
+        
+        # Clean up previous nodes MORE CAREFULLY
+        try:
+            # First, disconnect the segment editor from any nodes
+            if hasattr(self, 'segmentEditorWidget'):
+                self.segmentEditorWidget.setSegmentationNode(None)
+                self.segmentEditorWidget.setSourceVolumeNode(None)
+            
+            # Then remove nodes in the correct order
+            nodes_to_remove = []
+            if self.pointListNode:
+                nodes_to_remove.append(self.pointListNode)
+            if self.segmentation_node:
+                nodes_to_remove.append(self.segmentation_node)
+            if self.volume_node:
+                nodes_to_remove.append(self.volume_node)
+            
+            for node in nodes_to_remove:
+                if node and slicer.mrmlScene.IsNodePresent(node):
+                    slicer.mrmlScene.RemoveNode(node)
+            
+            # Reset references
+            self.volume_node = None
+            self.segmentation_node = None
+            self.pointListNode = None
+            
+            # Allow Qt to process events
+            slicer.app.processEvents()
+            
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
 
-        # Try loading as generic image first (JPG, PNG, TIFF, BMP)
-        # Try loading as generic 2D image (JPG, PNG, TIFF, BMP)
-        if image_path.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif")):
-            try:
-                
-                # Use VTK's factory to choose correct reader (JPEG/PNG/TIFF/etc.)
+        # Reset slice views
+        slicer.util.resetSliceViews()
+
+        # Now load the new image
+        try:
+            # 2D images (JPG, PNG, TIFF, BMP)
+            import vtk
+            if image_path.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif")):
                 readerFactory = vtk.vtkImageReader2Factory()
                 reader = readerFactory.CreateImageReader2(image_path)
-
+                
                 if reader:
                     reader.SetFileName(image_path)
                     reader.Update()
-
-                    # Create a new scalar volume node
+                    
                     self.volume_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLVectorVolumeNode")
+                    self.volume_node.SetName(os.path.basename(image_path))
                     self.volume_node.SetAndObserveImageData(reader.GetOutput())
-                    self.volume_node.SetSpacing(1, 1, 1)  # default spacing (unknown)
-                    slicer.util.setSliceViewerLayers(background=self.volume_node)
-
-                    logger.info(f"Loaded 2D image via VTK reader: {image_path}")
-
+                    self.volume_node.SetSpacing(1, 1, 1)
+                    logger.info(f"Loaded 2D image: {image_path}")
                 else:
-                    logger.error(f"No VTK reader available for: {image_path}")
-                    self.volume_node = None
-
-            except Exception as e:
-                logger.error(f"Failed to load 2D image using VTK reader: {e}")
-                self.volume_node = None
-
-
-        # Try loading as 3D or 2D medical volume
-        if self.volume_node is None and image_path.lower().endswith((".nii", ".nii.gz", ".nrrd")):
-            try:
+                    raise Exception("No VTK reader available")
+            
+            # NIfTI or NRRD files
+            elif image_path.lower().endswith((".nii", ".nii.gz", ".nrrd")):
                 self.volume_node = slicer.util.loadVolume(image_path)
                 logger.info(f"Loaded NIfTI/NRRD volume: {image_path}")
-            except Exception as e:
-                logger.warning(f"Failed to load NIfTI/NRRD: {e}")
-                self.volume_node = None
+            
+            # DICOM files - USE SIMPLE APPROACH
+            elif image_path.lower().endswith(".dcm"):
+                try:
+                    # Import pydicom for manual DICOM reading
+                    import pydicom
+                    
+                    # Read DICOM file
+                    ds = pydicom.dcmread(image_path)
+                    # print("DICOM tags:", ds)
 
-        # Try DICOM (manual load of a single file)
-        if self.volume_node is None and image_path.lower().endswith(".dcm"):
-            logger.info(f"Loading DICOM as single image: {image_path}")
-            self.volume_node = self._load_single_dicom(image_path)
+
+                    if "PixelData" not in ds:
+                        raise ValueError("No pixel data in DICOM file")
+                    
+                    # Get pixel array
+                    img = ds.pixel_array.astype(np.float32)
+                    
+                    # Apply rescale slope and intercept if present
+                    slope = float(getattr(ds, "RescaleSlope", 1.0))
+                    intercept = float(getattr(ds, "RescaleIntercept", 0.0))
+                    img = img * slope + intercept
+
+                    # --- Print basic histogram stats for debugging ---
+                    print("\n--- Histogram for:", image_path, "---")
+                    print("min:", float(img.min()))
+                    print("max:", float(img.max()))
+                    for p in [1, 5, 25, 50, 75, 95, 99]:
+                        print(f"p{p}:", float(np.percentile(img, p)))
+                    print("--- end ---\n")
+                    # -------------------------------------------------
 
 
+                    # --- Normalize only DES images (detected from SeriesDescription) ---
+                    series_desc = str(getattr(ds, "SeriesDescription", "")).upper()
+                    if "DES" in series_desc:
+                        L = 2000.0
+                        H = 2200.0
+                         # Window + normalize DES image
+                        img = np.clip(img, L, H)
+                        img = (img - L) * (2000.0 / (H - L))
 
-        # If STILL no volume loaded → error
-        if self.volume_node is None:
-            slicer.util.errorDisplay(f"Could not load image: {image_path}")
-            slicer.app.layoutManager().setRenderPaused(False)
-            return 1
+                    # -------------------------------------------------------------------
 
-        # Adjust window/level
-        self.restore_window_level_settings()
-        
-        # Load segmentation if available
-        try:
+                    # Check PhotometricInterpretation and flip if needed
+                    # Mammography images often need vertical flip
+                    photometric = getattr(ds, "PhotometricInterpretation", "").upper()
+                    
+                    # Flip for mammography or if no orientation info
+                    if photometric in ["MONOCHROME1", "MONOCHROME2"] or not hasattr(ds, "ImageOrientationPatient"):
+                        img = np.flipud(img)
+                    
+                     # -------------------added try this first--------end-------------
+
+
+                    # Create volume node
+                    self.volume_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
+                    self.volume_node.SetName(os.path.basename(image_path))
+                    
+                    # Update volume from numpy array
+                    slicer.util.updateVolumeFromArray(self.volume_node, img)
+
+                    
+                    
+                    # Set spacing from DICOM metadata (always 3D for Slicer)
+                    spacing = [1.0, 1.0, 1.0]
+                    if hasattr(ds, "PixelSpacing"):
+                        pixel_spacing = list(map(float, ds.PixelSpacing))
+                        spacing[0] = pixel_spacing[0]  # row spacing
+                        spacing[1] = pixel_spacing[1]  # column spacing
+                    if hasattr(ds, "SliceThickness"):
+                        spacing[2] = float(ds.SliceThickness)
+                    
+                    self.volume_node.SetSpacing(spacing)
+
+                     # ---------start----------added try this first---------------------
+
+                    # Set proper image orientation matrix
+                    if hasattr(ds, "ImageOrientationPatient"):
+                        # Get orientation from DICOM
+                        orientation = list(map(float, ds.ImageOrientationPatient))
+                        # Set IJK to RAS direction matrix
+                        
+                        directionMatrix = vtk.vtkMatrix4x4()
+                        directionMatrix.SetElement(0, 0, orientation[0])
+                        directionMatrix.SetElement(1, 0, orientation[1])
+                        directionMatrix.SetElement(2, 0, orientation[2])
+                        directionMatrix.SetElement(0, 1, orientation[3])
+                        directionMatrix.SetElement(1, 1, orientation[4])
+                        directionMatrix.SetElement(2, 1, orientation[5])
+                        self.volume_node.SetIJKToRASDirectionMatrix(directionMatrix)
+                    
+                     # -------------------added try this first--------end-------------
+
+                    
+                    logger.info(f"Loaded DICOM file manually: {image_path}")
+                    
+                except ImportError:
+                    # Fallback if pydicom not available - install it
+                    slicer.util.pip_install('pydicom')
+                    import pydicom
+                    # Retry the load
+                    return self.load_image_file(unique=unique)
+                    
+                except Exception as e:
+                    # Last resort fallback - try Slicer's loader
+                    logger.warning(f"Manual DICOM load failed: {e}, trying Slicer loader")
+                    try:
+                        self.volume_node = slicer.util.loadVolume(image_path, {"singleFile": True})
+                        if self.volume_node:
+                            logger.info(f"Loaded DICOM via Slicer: {image_path}")
+                    except Exception as e2:
+                        raise Exception(f"All DICOM loading methods failed: {e}, {e2}")
+            
+            else:
+                raise Exception(f"Unsupported file format: {image_path}")
+            
+            if self.volume_node is None:
+                raise Exception("Volume node is None after loading")
+            
+            # Set the volume as background in slice views
+            slicer.util.setSliceViewerLayers(background=self.volume_node)
+            
+            # Center the slice views on the volume
+            slicer.util.resetSliceViews()
+            
+            # Restore window/level settings
+            self.restore_window_level_settings()
+            
+            # Load segmentation if available
             if self.segmentation_files[self.current_index] and \
             self.segmentation_files[self.current_index].endswith((".nii", ".nrrd", ".nii.gz")):
-                self.segmentation_node = slicer.util.loadSegmentation(
-                    self.segmentation_files[self.current_index]
-                )
-                self.restore_segment_visiblity_states()
-                self.set_segmentation_and_mask_for_segmentation_editor()
-                logger.info(f"Loaded segmentation: {self.segmentation_files[self.current_index]}")
+                try:
+                    self.segmentation_node = slicer.util.loadSegmentation(
+                        self.segmentation_files[self.current_index]
+                    )
+                    self.restore_segment_visiblity_states()
+                    self.set_segmentation_and_mask_for_segmentation_editor()
+                    logger.info(f"Loaded segmentation: {self.segmentation_files[self.current_index]}")
+                except Exception as e:
+                    logger.error(f"Failed to load segmentation: {e}")
+            
+            # Resume rendering
+            slicer.app.layoutManager().setRenderPaused(False)
+            slicer.app.processEvents()
+            
+            return 1  # Success
+            
         except Exception as e:
-            logger.error(f"Failed to load segmentation: {e}")
-
-        slicer.app.layoutManager().setRenderPaused(False)
-        return None
+            logger.error(f"Failed to load image {image_path}: {e}")
+            slicer.util.errorDisplay(f"Could not load image: {image_path}\nError: {str(e)}")
+            slicer.app.layoutManager().setRenderPaused(False)
+            return 0  # Failure
 
     def set_segmentation_and_mask_for_segmentation_editor(self):
         slicer.app.processEvents()
