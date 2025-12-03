@@ -12,8 +12,8 @@ import qt
 from datetime import datetime
 import SegmentStatistics
 import logging
+import re
 #from qt import QtCore, QtGui
-
 
 try:
     import pandas as pd
@@ -54,29 +54,6 @@ This file was developed by Donna Hooft based on a github repository created by A
 """
        
 
-#
-# CEMArtifactsWidget
-#
-class CEMArtifacts(ScriptedLoadableModule):
-    """Uses ScriptedLoadableModule base class, available at:
-    https://github.com/Slicer/Slicer/blob/master/Base/Python/slicer/ScriptedLoadableModule.py
-    """
-
-    def __init__(self, parent):
-        ScriptedLoadableModule.__init__(self, parent)
-        self.parent.title = "CEM Artifacts review"  
-        self.parent.categories = ["Examples"]  
-        self.parent.dependencies = []  
-        self.parent.contributors = ["Donna Hooft;Valentina Corbetta"]  
-        self.parent.helpText = """
-Slicer3D extension for assesing presence of artifacts on recombined Contrast Enhanced Mammography (CEM) images and 
-for segmentation of Artifacts which are not locally bound.
-       """
-        self.parent.acknowledgementText = """
-This file was developed by Donna Hooft based on a github repository created by Anna Zapaishchykova and Vasco Prudente. 
-"""
-       
-
 
 #
 # CEMArtifactsWidget
@@ -96,13 +73,23 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.logic = None
         self._parameterNode = None
         self._updatingGUIFromParameterNode = False
-        self.volume_node = None
+
+
+        # Changed to store pairs of volumes (DM and CM)
+        self.volume_pairs = {}  # Maps view tag (e.g., "P1_L_CC") to {"DM": node, "CM": node}
         self.segmentation_node = None
+        
+        self.image_pairs = []  # List of paired image info dicts
+        self.directory = None
+        self.current_index = 0
+        self.likert_scores = []
+        self.n_pairs = 0
+        
+        
+
+        self.volume_node = None
         self.nifti_files = []
         self.segmentation_files = []
-        self.directory=None
-        self.current_index=0
-        self.likert_scores = []
         self.n_files = 0
         self.seg_mask_status = [] # 0 - no mask, 1 - mask path, cannot load , 2 - mask loaded, 3- mask edited
         self.with_mapper_flag = False
@@ -110,10 +97,14 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.id_subs_checked = []
         self.unique_case_flag=False
         self.finish_flag = False
+
+
         self.pointListNode = None
         self.window_level = None   # To store current window/level settings
         self.segment_visiblity_states = {}  # Dictionary to store the visibility toggle of each segment
         self._is_loading = False # Flag to prevent re-entrance during loading
+
+
 
 
 
@@ -138,9 +129,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.layout.addWidget(uiWidget)
         self.ui = slicer.util.childWidgetVariables(uiWidget)
 
-
         parametersFormLayout = qt.QFormLayout(parametersCollapsibleButton)
-
         self.atlasDirectoryButton = ctk.ctkDirectoryButton() #lets you select path for pictures
         parametersFormLayout.addRow("Directory: ", self.atlasDirectoryButton) #Buttons for input path
         
@@ -148,7 +137,6 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # "mrmlSceneChanged(vtkMRMLScene*)" signal in is connected to each MRML widget's.
         # "setMRMLScene(vtkMRMLScene*)" slot.
         uiWidget.setMRMLScene(slicer.mrmlScene)
-
         # Create logic class. Logic implements all computations that should be possible to run
         # in batch mode, without a graphical user interface.
         self.logic = SlicerLikertDLratingLogic()
@@ -169,7 +157,6 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Connect the keyboard handler 
         shortcut = QtGui.QShortcut(QtGui.QKeySequence("1"), self)
         shortcut.activated.connect(onKeyPress)'''
-
 
         # These connections ensure that we update parameter node when scene is closed
         self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
@@ -196,7 +183,6 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # --- Keyboard shortcut for both (Ctrl/Command + Return) ---
         save_shortcut = qt.QShortcut(qt.QKeySequence("Ctrl+Return"), self.parent)
         save_shortcut.activated.connect(self.save_and_next_clicked)
-
         # macOS command key version
         save_shortcut_mac = qt.QShortcut(qt.QKeySequence("Meta+Return"), self.parent)
         save_shortcut_mac.activated.connect(self.save_and_next_clicked)
@@ -299,37 +285,57 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         
        
 
+    # def overwrite_mask_clicked(self):
+    #     # overwrite self.segmentEditorWidget.segmentationNode()
+    #     self.segmentation_node = slicer.mrmlScene.GetFirstNodeByClass('vtkMRMLSegmentationNode')
+    #     file_path = self.joinpath(self.directory,"t.seg.nrrd")
+    #     # Save the segmentation node to file as nifti
+    #     self.file_path_nifti = str(self.nifti_files[self.current_index]).split(".")[0]+f"_mask_{datetime.now().strftime('%Y%m%d_%H%M%S')}.nii.gz"
+    #     self.seg_mask_status[self.current_index] = 3
+    #     # add to the list of segmentation files
+    #     self.segmentation_files[self.current_index] = self.file_path_nifti
+    #     # Save the segmentation node to file
+    #     slicer.util.saveNode(self.segmentation_node, file_path)
+    #     img = sitk.ReadImage(file_path)
+        
+    #     sitk.WriteImage(img, self.file_path_nifti)
+        
+    #     #delete the temporary file
+    #     try:
+    #         os.remove(file_path)
+    #     except:
+    #         pass
+
     def overwrite_mask_clicked(self):
-        # overwrite self.segmentEditorWidget.segmentationNode()
         self.segmentation_node = slicer.mrmlScene.GetFirstNodeByClass('vtkMRMLSegmentationNode')
-        file_path = self.joinpath(self.directory,"t.seg.nrrd")
-        # Save the segmentation node to file as nifti
-        self.file_path_nifti = str(self.nifti_files[self.current_index]).split(".")[0]+f"_mask_{datetime.now().strftime('%Y%m%d_%H%M%S')}.nii.gz"
-        self.seg_mask_status[self.current_index] = 3
-        # add to the list of segmentation files
-        self.segmentation_files[self.current_index] = self.file_path_nifti
-        # Save the segmentation node to file
+        file_path = os.path.join(self.directory, "t.seg.nrrd")
+        
+        current_pair = self.image_pairs[self.current_index]
+        base_name = current_pair['base_name']
+        self.file_path_nifti = os.path.join(
+            self.directory, 
+            f"{base_name}_mask_{datetime.now().strftime('%Y%m%d_%H%M%S')}.nii.gz"
+        )
+        
         slicer.util.saveNode(self.segmentation_node, file_path)
         img = sitk.ReadImage(file_path)
-        
         sitk.WriteImage(img, self.file_path_nifti)
         
-        #delete the temporary file
         try:
             os.remove(file_path)
         except:
             pass
 
-    # def joinpath(self,rootdir,targetdir):
-    #     return os.path.join(os.sep, rootdir+os.sep,targetdir)
+
     
     def joinpath(self, rootdir, filename):
         return os.path.join(rootdir, filename)
-
-
-    # def _is_valid_extension(self, path):
-    #     valid = [".nii", ".nii.gz", ".nrrd", ".jpg", ".jpeg", ".png"]
-    #     return any(path.lower().endswith(ext) for ext in valid)
+        
+    def _construct_full_path(self, path):
+        if os.path.isabs(path):
+            return path
+        else:
+            return self.joinpath(self.directory, path)
 
     def _is_valid_extension(self, path):
         # First check normal image extensions
@@ -348,12 +354,59 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         except:
             return False
 
+    def _parse_filename(self, filename):
+        """
+        Parse filename like P1_L_DM_CC.jpg or P1_R_CM_MLO.jpg
+        Returns dict with patient, laterality, image_type, view
+        """
+        pattern = r'P(\d+)_([LR])_(DM|CM)_(CC|MLO)'
+        match = re.match(pattern, filename, re.IGNORECASE)
+        
+        if match:
+            return {
+                'patient': match.group(1),
+                'laterality': match.group(2).upper(),
+                'image_type': match.group(3).upper(),
+                'view': match.group(4).upper(),
+                'filename': filename
+            }
+        return None
     
-    def _construct_full_path(self, path):
-        if os.path.isabs(path):
-            return path
-        else:
-            return self.joinpath(self.directory, path)
+    def _group_image_pairs(self, files):
+        """
+        Group DM and CM images into pairs based on patient, laterality, and view.
+        Returns list of dicts with 'DM' and 'CM' file paths.
+        """
+        parsed_files = []
+        for f in files:
+            parsed = self._parse_filename(os.path.basename(f))
+            if parsed:
+                parsed['full_path'] = f
+                parsed_files.append(parsed)
+        
+        # Group by patient_laterality_view
+        pairs_dict = {}
+        for pf in parsed_files:
+            key = f"P{pf['patient']}_{pf['laterality']}_{pf['view']}"
+            if key not in pairs_dict:
+                pairs_dict[key] = {'base_name': key, 'patient': pf['patient'], 
+                                   'laterality': pf['laterality'], 'view': pf['view']}
+            
+            pairs_dict[key][pf['image_type']] = pf['full_path']
+        
+        # Only keep complete pairs (both DM and CM)
+        complete_pairs = []
+        for key, pair_info in pairs_dict.items():
+            if 'DM' in pair_info and 'CM' in pair_info:
+                complete_pairs.append(pair_info)
+        
+        # Sort by patient number, laterality, then view
+        complete_pairs.sort(key=lambda x: (int(x['patient']), x['laterality'], x['view']))
+        
+        return complete_pairs
+    
+
+
     
     def _restore_index(self, ann_csv, files_list, mask_list, mask_status_list=None):
         #print(files_list,mask_list)
@@ -457,17 +510,28 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         logger.addHandler(fileHandler) 
         
         try:
-            slicer.mrmlScene.RemoveNode(self.volume_node) 
-            slicer.mrmlScene.RemoveNode(self.segmentation_node)
+            # Clear existing volumes
+            for pair in self.volume_pairs.values():
+                for vol in pair.values():
+                    if vol:
+                        slicer.mrmlScene.RemoveNode(vol)
+            self.volume_pairs = {}
+            
+            if self.segmentation_node:
+                slicer.mrmlScene.RemoveNode(self.segmentation_node)
         except:
             pass
         
-        self.unique_case_flag=False
+        # self.unique_case_flag=False
 
         mapping_unique = os.path.join(directory, "mapping_unique.csv")
         mapping_file = os.path.join(directory, "mapping.csv")
         # case 0: searching for one unique nifti file for id
         # they 
+
+
+
+
         if os.path.isfile(mapping_unique):
             case_flag = True
             # mapping file contains id and nifti file name
@@ -549,64 +613,20 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # case 2: no mapper found → detect images + DICOM
         else:
             logger.info('No mappings between files and masks')
-            processed_files = set()
-
-            # for root, _, files in os.walk(directory):
-            #     for f in files:
-            #         if f.lower().endswith(".dcm"):
-            #             dcm_path = os.path.join(root, f)
-            #             self.nifti_files.append(dcm_path)
-            #             self.segmentation_files.append("")   # no mask by default
-            #             self.seg_mask_status.append(0)
-            #             logger.info(f"Found DICOM file: {dcm_path}")
-
-             
-            # 1) Add individual DICOM files (each .dcm file is its own item)
-            for root, _, files in os.walk(directory):
-                for f in files:
-                    if f.lower().endswith(".dcm"):
-                        dcm_path = os.path.join(root, f)
-                        
-                        # Skip if already processed
-                        if dcm_path in processed_files:
-                            continue
-                            
-                        processed_files.add(dcm_path)
-                        self.nifti_files.append(dcm_path)
-                        self.segmentation_files.append("")
-                        self.seg_mask_status.append(0)
-                        logger.info(f"Found DICOM file: {dcm_path}")
+            # processed_files = set()
 
 
-
-            ## 2) Add flat images (nii, nrrd, jpg, png)
+            valid_files = []
             for file in os.listdir(directory):
-                print("File:",file)
-                print("Directory:",directory)
-                
                 full_path = os.path.join(directory, file)
-                print("Full path:",full_path)
-
-                # skip subdirs (handled in DICOM walk)
-                if os.path.isdir(full_path):
-                    print("is dir, continues")
-                    continue
-
-                # Only handle image extensions
-                if not self._is_valid_extension(file):
-                    print("not valid extension, continues")
-                    continue  # <-- THIS IS THE FIX
-
-                # Skip mask files
-                if "_mask" in file.lower():
-                    continue
-
-                processed_files.add(full_path)
-                if full_path not in self.nifti_files:
-                    self.nifti_files.append(full_path)
+                if os.path.isfile(full_path) and file.lower().endswith(('.jpg', '.jpeg', '.png')):
+                    if '_mask' not in file.lower():
+                        valid_files.append(full_path)
+            
 
 
                 base = os.path.splitext(file)[0]
+
                 possible_masks = [
                     os.path.join(directory, base + "_mask.nrrd"),
                     os.path.join(directory, base + "_mask.nii.gz"),
@@ -625,35 +645,272 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                     logger.info(f"No mask for {file}")
 
 
-                        
-        self.current_index = 0               
+        # Group into DM/CM pairs
+        self.image_pairs = self._group_image_pairs(valid_files)
+        print(self.image_pairs)
+        self.n_pairs = len(self.image_pairs)
+        
+        logger.info(f'Found {self.n_pairs} complete DM/CM pairs')
+        
+        self.current_index = 0         
         # load the .cvs file with the old annotations or create a new one
         #print("Path exists",os.path.exists(self.joinpath(directory,"annotations.csv")))
-        if os.path.exists(self.joinpath(directory,"annotations.csv")):
-        
-            ann_csv = pd.read_csv(self.joinpath(directory,"annotations.csv"), header=None,index_col=False, names=["file","artifacts","other","mask_path","mask_status"])
-            #print(ann_csv)
-            if self.unique_case_flag:
-                self.nifti_files, self.segmentation_files, self.seg_mask_status, self.id_subs, self.id_subs_checked = self._restore_index(ann_csv, self.nifti_files,
-                                                                                                 self.segmentation_files, self.seg_mask_status)
-            else:
-                self.nifti_files, self.segmentation_files, self.seg_mask_status, _,_ = self._restore_index(ann_csv, self.nifti_files, self.segmentation_files, self.seg_mask_status)
+        # Check for existing annotations
+        ann_path = os.path.join(directory, "annotations.csv")
+        if os.path.exists(ann_path):
+            ann_csv = pd.read_csv(ann_path, header=None, index_col=False,
+                                 names=["base_name", "artifacts", "other", "mask_path", "mask_status"])
             
-            logger.info(f'Found session, restoring annotations {len(self.nifti_files)} files left') 
-            
-        self.n_files = len(self.nifti_files)
-        self.ui.status_checked.setText("Checked: "+ str(self.current_index) + " / "+str(self.n_files))
+            completed_bases = set(ann_csv['base_name'].values)
+            self.image_pairs = [p for p in self.image_pairs if p['base_name'] not in completed_bases]
+            self.n_pairs = len(self.image_pairs)
+            logger.info(f'Restored session: {self.n_pairs} pairs remaining')
         
-        #print("Images:",len(self.nifti_files), 
-        #      "Masks:",len(self.segmentation_files))
-        logger.info( f'Total Images Loaded: {len(self.nifti_files)}, Images with Masks: {len(self.segmentation_files)}')
+        self.ui.status_checked.setText(f"Checked: {self.current_index} / {self.n_pairs}")
         
-        # load first file with mask
-        self.load_image_file(self.unique_case_flag)
+        if self.n_pairs > 0:
+            print("shoudlnow load new im pair")
+            self.load_image_pair()
 
      # ______________________________________________________________________________________________________________________________________ ___________________________________________________________________ 
 
 # 
+   
+    # def setupSideBySideLayout(self, dm_volume, cm_volume):
+    #     """Setup the side-by-side layout with DM on left, CM on right"""
+    #     # Always ensure the layout is registered first
+    #     lm = slicer.app.layoutManager()
+
+    #     layout_id = self.ensureCustomLayoutAvailable()
+        
+    #     # Force set the layout (this is critical after scene changes)
+    #     lm.setLayout(layout_id)
+        
+    #     def views_ready():
+    #         return lm.sliceWidget("DM") is not None and lm.sliceWidget("CM") is not None
+        
+    #     def wire_volumes():
+    #         for tag, vol in [("DM", dm_volume), ("CM", cm_volume)]:
+    #             sw = lm.sliceWidget(tag)
+    #             if not sw:
+    #                 continue
+                    
+    #             logic = sw.sliceLogic()
+    #             comp = logic.GetSliceCompositeNode()
+    #             sn = logic.GetSliceNode()
+                
+    #             comp.SetBackgroundVolumeID(vol.GetID())
+    #             sn.SetOrientationToDefault()
+    #             sn.UpdateMatrices()
+                
+    #             logic.FitSliceToAll()
+    #             fov = sn.GetFieldOfView()
+    #             sn.SetFieldOfView(fov[0]*0.88, fov[1]*0.88, fov[2])
+        
+    #     def poll():
+    #         if views_ready():
+    #             wire_volumes()
+    #         else:
+    #             qt.QTimer.singleShot(50, poll)
+        
+    #     qt.QTimer.singleShot(0, poll)
+    
+    
+    def setupSideBySideLayout(self, dm_volume, cm_volume):
+        """Setup the side-by-side layout with DM on left, CM on right using built-in Slicer layout"""
+        # Use built-in side-by-side layout
+        lm = slicer.app.layoutManager()
+        lm.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutSideBySideView)
+        
+        def views_ready():
+            # In the built-in side-by-side layout, views are named "Red" and "Yellow"
+            return lm.sliceWidget("Red") is not None and lm.sliceWidget("Yellow") is not None
+        
+        def wire_volumes():
+            # Red view (left) = DM, Yellow view (right) = CM
+            for tag, vol in [("Red", dm_volume), ("Yellow", cm_volume)]:
+                sw = lm.sliceWidget(tag)
+                if not sw:
+                    continue
+                    
+                logic = sw.sliceLogic()
+                comp = logic.GetSliceCompositeNode()
+                sn = logic.GetSliceNode()
+                
+                # Set the background volume
+                comp.SetBackgroundVolumeID(vol.GetID())
+                comp.SetForegroundVolumeID(None)
+                comp.SetLabelVolumeID(None)
+                
+                # Disable foreground opacity (removes color overlay)
+                comp.SetForegroundOpacity(0.0)
+                
+                # Force axial orientation (also known as transverse/horizontal)
+                sn.SetOrientationToAxial()
+                sn.UpdateMatrices()
+                
+                # Reset the slice viewer to grayscale (remove Red/Yellow tint)
+                displayNode = vol.GetDisplayNode()
+                if displayNode:
+                    displayNode.SetAndObserveColorNodeID("vtkMRMLColorTableNodeGrey")
+                
+                # Fit the view to the image
+                logic.FitSliceToAll()
+                
+                # Apply a slight zoom
+                fov = sn.GetFieldOfView()
+                sn.SetFieldOfView(fov[0]*0.88, fov[1]*0.88, fov[2])
+        
+        def poll():
+            if views_ready():
+                wire_volumes()
+            else:
+                qt.QTimer.singleShot(50, poll)
+        
+        qt.QTimer.singleShot(0, poll)
+
+
+    def load_image_pair(self):
+        """Load a pair of DM and CM images side by side"""
+        print(f"[DEBUG] load_image_pair called - _is_loading={self._is_loading}, index={self.current_index}")
+        
+        if self._is_loading:
+            print(f"[DEBUG] Already loading, skipping load_image_pair")
+            return
+        self._is_loading = True
+        
+        try:
+            if self.current_index >= self.n_pairs:
+                print(f"[DEBUG] Index {self.current_index} >= n_pairs {self.n_pairs}, showing completion message")
+                qt.QMessageBox.information(
+                    slicer.util.mainWindow(), 
+                    "Complete", 
+                    "All image pairs have been reviewed!"
+                )
+                self._is_loading = False
+                return
+            
+            logger = logging.getLogger('CEMArtifacts')
+            current_pair = self.image_pairs[self.current_index]
+            
+            print(f"[DEBUG] Loading pair: {current_pair['base_name']}")
+            print(f"[DEBUG] DM: {current_pair['DM']}")
+            print(f"[DEBUG] CM: {current_pair['CM']}")
+            
+            # Clean up previous volumes
+            slicer.app.layoutManager().setRenderPaused(True)
+            
+            try:
+                if hasattr(self, 'segmentEditorWidget'):
+                    self.segmentEditorWidget.setSegmentationNode(None)
+                    self.segmentEditorWidget.setSourceVolumeNode(None)
+                
+                for pair in self.volume_pairs.values():
+                    for node in pair.values():
+                        if node and slicer.mrmlScene.IsNodePresent(node):
+                            slicer.mrmlScene.RemoveNode(node)
+                
+                self.volume_pairs = {}
+
+
+                if self.segmentation_node and slicer.mrmlScene.IsNodePresent(self.segmentation_node):
+                    slicer.mrmlScene.RemoveNode(self.segmentation_node)
+                self.segmentation_node = None
+                
+                slicer.app.processEvents()
+            except Exception as e:
+                logger.error(f"Cleanup error: {e}")
+            
+            slicer.util.resetSliceViews()
+
+            # Load DM and CM images
+            dm_path = current_pair['DM']
+            cm_path = current_pair['CM']
+            
+            readerFactory = vtk.vtkImageReader2Factory()
+            
+            # Load DM image
+            print(f"[DEBUG] Loading DM image...")
+            dm_reader = readerFactory.CreateImageReader2(dm_path)
+            if dm_reader:
+                dm_reader.SetFileName(dm_path)
+                dm_reader.Update()
+                
+                dm_volume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLVectorVolumeNode")
+                dm_volume.SetName(f"{current_pair['base_name']}_DM")
+                dm_volume.SetAndObserveImageData(dm_reader.GetOutput())
+                dm_volume.SetSpacing(1, 1, 1)
+                print(f"[DEBUG] DM volume loaded: {dm_volume.GetName()}")
+            else:
+                raise Exception(f"Could not load DM image: {dm_path}")
+        
+            # Load CM image
+            print(f"[DEBUG] Loading CM image...")
+            cm_reader = readerFactory.CreateImageReader2(cm_path)
+            if cm_reader:
+                cm_reader.SetFileName(cm_path)
+                cm_reader.Update()
+                
+                cm_volume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLVectorVolumeNode")
+                cm_volume.SetName(f"{current_pair['base_name']}_CM")
+                cm_volume.SetAndObserveImageData(cm_reader.GetOutput())
+                cm_volume.SetSpacing(1, 1, 1)
+                print(f"[DEBUG] CM volume loaded: {cm_volume.GetName()}")
+            else:
+                raise Exception(f"Could not load CM image: {cm_path}")
+            # # ----- LOAD DM -----
+            # dm_reader = vtk.vtkJPEGReader()
+            # dm_reader.SetFileName(current_pair['DM']); dm_reader.Update()
+            # dm_volume = slicer.modules.volumes.logic().CreateVolume(dm_reader.GetOutput())
+            # dm_volume.SetName(f"{current_pair['base_name']}_DM")
+
+            # # ----- LOAD CM -----
+            # cm_reader = vtk.vtkJPEGReader()
+            # cm_reader.SetFileName(current_pair['CM']); cm_reader.Update()
+            # cm_volume = slicer.modules.volumes.logic().CreateVolume(cm_reader.GetOutput())
+            # cm_volume.SetName(f"{current_pair['base_name']}_CM")
+
+            # Store volume pair
+            self.volume_pairs[current_pair['base_name']] = {
+                'DM': dm_volume,
+                'CM': cm_volume
+            }
+
+            print(f"[DEBUG] Setting up side-by-side layout...")
+            
+            # Setup side-by-side layout
+            self.setupSideBySideLayout(dm_volume, cm_volume)
+
+            print(f"[DEBUG] Layout setup complete")
+            
+            logger.info(f"Loaded pair: {current_pair['base_name']}")
+            
+            # Resume rendering
+            slicer.app.layoutManager().setRenderPaused(False)
+            slicer.app.processEvents()
+            
+            print(f"[DEBUG] load_image_pair completed successfully")
+            self._is_loading = False
+            return 1
+            
+        except Exception as e:
+            logger = logging.getLogger('CEMArtifacts')
+            logger.error(f"Failed to load image pair: {e}")
+            print(f"[DEBUG] ERROR in load_image_pair: {e}")
+            import traceback
+            traceback.print_exc()
+            qt.QMessageBox.critical(
+                slicer.util.mainWindow(),
+                "Load Error",
+                f"Could not load image pair\nError: {str(e)}"
+            )
+            slicer.app.layoutManager().setRenderPaused(False)
+            self._is_loading = False
+            return 0
+        
+        finally:
+            self._is_loading = False
+
     def _numerical_status_to_str(self, status):
         return {0: "No mask found", 1: "Cannot load mask", 2: "Mask loaded, no edits", 3:"Mask edited"}[status]   
     
@@ -671,90 +928,12 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     #DO these have to be ina ccordance iwht button from .ui? ie or is labels for csv files?
 # ______________________________________________________________________________________________________________________________________ ___________________________________________________________________ 
 
-# 
-    # def save_and_next_clicked(self):
-    #     # Determine if artifact is present
-    #     artifact_present = None
-    #     if self.ui.radioButton_1.isChecked():  # Yes
-    #         artifact_present = True
-    #     elif self.ui.radioButton_2.isChecked():  # No
-    #         artifact_present = False
-
-    #     if artifact_present is None:
-    #         slicer.util.errorDisplay("Please select Yes or No before continuing.")
-    #         return
-
-    #     # If no artifact: save that and move on
-    #     if not artifact_present:
-    #         annotation = "No artifact"
-    #         artifact_list = []
-    #     else:
-    #         # Collect all selected checkboxes
-    #         artifact_list = []
-    #         for i in range(1, 8):  # checkBox_1 ... checkBox_6
-    #             checkbox = getattr(self.ui, f"checkBox_{i}")
-    #             if checkbox.isChecked():
-    #                 artifact_list.append(i)
-
-    #         if not artifact_list:
-    #             slicer.util.warningDisplay("You selected 'Yes' but no artifact type — please choose at least one.")
-    #             return
-
-    #         annotation = self._artifacts_to_str(artifact_list)
-
-    #     # Save comment
-    #     comment_text = self.ui.comment.toPlainText()
-
-    #     # Append to internal list (for memory)
-    #     self.likert_scores.append([self.current_index, annotation, comment_text])
-
-    #     # Save to CSV
-    #     head, tail = os.path.split(self.nifti_files[self.current_index])
-    #     data = {
-    #         'file': [self.nifti_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
-    #         'artifacts': [annotation],
-    #         'other': [comment_text],
-    #         'mask_path': [self.segmentation_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
-    #         'mask_status': [self._numerical_status_to_str(self.seg_mask_status[self.current_index])]
-    #     }
-    #     df = pd.DataFrame(data)
-    #     df.to_csv(self.joinpath(self.directory, "annotations.csv"), mode='a', index=False, header=False)
-
-
-    #         # Store settings before moving to next
-    #     if self.volume_node and self.volume_node.GetDisplayNode():
-    #         self.store_current_window_level_settings()
-        
-    #     if self.segmentation_node:
-    #         self.store_segment_visiblity_states()
-
-    #     # Move to next file
-    #     ret = 0
-    #     if self.current_index < self.n_files - 1:
-    #         if self.unique_case_flag:
-    #             while ret == 0 and self.current_index < self.n_files - 1:
-    #                 self.current_index += 1
-    #                 ret = self.load_image_file(unique=True)
-    #                 if self.current_index >= self.n_files - 1:
-    #                     print("*All files checked", self.current_index, self.n_files)
-    #                     self.finish_flag = True
-    #                     break
-    #         else:
-    #             self.current_index += 1
-    #             self.load_image_file(unique=False)
-
-    #         self.ui.comment.setPlainText("")
-    #         self.ui.status_checked.setText("Checked: " + str(self.current_index) + " / " + str(self.n_files))
-    #     else:
-    #         print("All files checked")
-    #         self.finish_flag = True
-
     def save_and_next_clicked(self):
 
-        # Prevent re-entry (double clicks, UI event glitches)
-        if self._is_loading:
-            return
-        self._is_loading = True
+        # # Prevent re-entry (double clicks, UI event glitches)
+        # if self._is_loading:
+        #     return
+        # self._is_loading = True
 
         try:
             
@@ -792,17 +971,25 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             
             # 3. Save comment
             comment_text = self.ui.comment.toPlainText()
-            self.likert_scores.append([self.current_index, annotation, comment_text])
+            current_pair = self.image_pairs[self.current_index]
+            # self.likert_scores.append([self.current_index, annotation, comment_text])
 
             
             # 4. Append to CSV
-            head, tail = os.path.split(self.nifti_files[self.current_index])
+            # head, tail = os.path.split(self.nifti_files[self.current_index])
+            # data = {
+            #     'file': [self.nifti_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
+            #     'artifacts': [annotation],
+            #     'other': [comment_text],
+            #     'mask_path': [self.segmentation_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
+            #     'mask_status': [self._numerical_status_to_str(self.seg_mask_status[self.current_index])]
+            # }
             data = {
-                'file': [self.nifti_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
+                'base_name': [current_pair['base_name']],
                 'artifacts': [annotation],
                 'other': [comment_text],
-                'mask_path': [self.segmentation_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
-                'mask_status': [self._numerical_status_to_str(self.seg_mask_status[self.current_index])]
+                'mask_path': [""],
+                'mask_status': ["No mask"]
             }
 
             df = pd.DataFrame(data)
@@ -810,40 +997,40 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                     mode='a', index=False, header=False)
 
             
-            # 5. Store window/level + visibility state
-            if self.volume_node and self.volume_node.GetDisplayNode():
-                self.store_current_window_level_settings()
+            # # 5. Store window/level + visibility state
+            # if self.volume_node and self.volume_node.GetDisplayNode():
+            #     self.store_current_window_level_settings()
 
-            if self.segmentation_node:
-                self.store_segment_visiblity_states()
+            # if self.segmentation_node:
+            #     self.store_segment_visiblity_states()
 
             
-            # 6. COMPUTE NEXT INDEX SAFELY
-            if self.current_index >= self.n_files - 1:
-                print("All files checked")
-                self.finish_flag = True
-                return
+            # # 6. COMPUTE NEXT INDEX SAFELY
+            # if self.current_index >= self.n_files - 1:
+            #     print("All files checked")
+            #     self.finish_flag = True
+            #     return
 
-            # Unique mode → skip already checked subjects
-            if self.unique_case_flag:
-                next_index = self.current_index + 1
+            # # Unique mode → skip already checked subjects -pa
+            # if self.unique_case_flag:
+            #     next_index = self.current_index + 1
 
-                while (
-                    next_index < self.n_files
-                    and self.id_subs[next_index] in self.id_subs_checked
-                ):
-                    next_index += 1
+            #     while (
+            #         next_index < self.n_files
+            #         and self.id_subs[next_index] in self.id_subs_checked
+            #     ):
+            #         next_index += 1
 
-                if next_index >= self.n_files:
-                    print("All files checked")
-                    self.finish_flag = True
-                    return
+            #     if next_index >= self.n_files:
+            #         print("All files checked")
+            #         self.finish_flag = True
+            #         return
 
-                self.current_index = next_index
+            #     self.current_index = next_index
 
-            # Normal mode
-            else:
-                self.current_index += 1
+            # # Normal mode
+            # else:
+            #     self.current_index += 1
 
             
             # 7. RESET UI BEFORE LOADING NEXT IMAGE
@@ -853,29 +1040,33 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 
             ## Reset Yes/No radio buttons safely
             self.yesNoGroup.setExclusive(False)
-
             self.ui.radioButton_1.setChecked(False)
             self.ui.radioButton_2.setChecked(False)
             self.ui.comment.clear()
-
-
             slicer.app.processEvents()
-
             self.yesNoGroup.setExclusive(True)
-
             slicer.app.processEvents()
             
-            # 8. LOAD NEXT IMAGE EXACTLY ONCE
-            if self.unique_case_flag:
-                self.load_image_file(unique=True)
+            print("idx & pairs:",self.current_index, self.n_pairs)
+            # Move to next pair
+            if self.current_index >= self.n_pairs - 1:
+                
+                print("All pairs checked")
+                return
             else:
-                self.load_image_file(unique=False)
+                self.current_index += 1
+                self.load_image_pair()
+            
+            self.ui.status_checked.setText(
+                f"Checked: {self.current_index} / {self.n_pairs}"
+            )
+            # # 8. LOAD NEXT IMAGE EXACTLY ONCE
+            # if self.unique_case_flag:
+            #     self.load_image_file(unique=True)
+            # else:
+            #     self.load_image_file(unique=False)
 
             
-            # 9. Update progress label
-            self.ui.status_checked.setText(
-                f"Checked: {self.current_index} / {self.n_files}"
-            )
 
         finally:
             # Ensure unlock even if an exception happens
@@ -914,235 +1105,6 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             visibility = self.segment_visiblity_states.get(segment_id, True)
             self.segmentation_node.GetDisplayNode().SetSegmentVisibility(segment_id, visibility)
 
-
-
-    def load_image_file(self, unique=False):
-        """Load NIFTI, NRRD, DICOM, or image file and associated segmentation."""
-        
-        # Check if we should skip this file (for unique mode)
-        if unique:
-            if self.current_index < self.n_files and self.id_subs[self.current_index] in self.id_subs_checked:
-                return 0
-            elif self.current_index >= self.n_files:
-                return 1
-
-        logger = logging.getLogger('CEMArtifacts')
-        image_path = self.nifti_files[self.current_index]
-        
-        # CRITICAL: Pause rendering and properly clean up before loading new content
-        slicer.app.layoutManager().setRenderPaused(True)
-        
-        # Clean up previous nodes MORE CAREFULLY
-        try:
-            # First, disconnect the segment editor from any nodes
-            if hasattr(self, 'segmentEditorWidget'):
-                self.segmentEditorWidget.setSegmentationNode(None)
-                self.segmentEditorWidget.setSourceVolumeNode(None)
-            
-            # Then remove nodes in the correct order
-            nodes_to_remove = []
-            if self.pointListNode:
-                nodes_to_remove.append(self.pointListNode)
-            if self.segmentation_node:
-                nodes_to_remove.append(self.segmentation_node)
-            if self.volume_node:
-                nodes_to_remove.append(self.volume_node)
-            
-            for node in nodes_to_remove:
-                if node and slicer.mrmlScene.IsNodePresent(node):
-                    slicer.mrmlScene.RemoveNode(node)
-            
-            # Reset references
-            self.volume_node = None
-            self.segmentation_node = None
-            self.pointListNode = None
-            
-            # Allow Qt to process events
-            slicer.app.processEvents()
-            
-        except Exception as e:
-            logger.error(f"Error during cleanup: {e}")
-
-        # Reset slice views
-        slicer.util.resetSliceViews()
-
-        # Now load the new image
-        try:
-            # 2D images (JPG, PNG, TIFF, BMP)
-            import vtk
-            if image_path.lower().endswith((".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".tif")):
-                readerFactory = vtk.vtkImageReader2Factory()
-                reader = readerFactory.CreateImageReader2(image_path)
-                
-                if reader:
-                    reader.SetFileName(image_path)
-                    reader.Update()
-                    
-                    self.volume_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLVectorVolumeNode")
-                    self.volume_node.SetName(os.path.basename(image_path))
-                    self.volume_node.SetAndObserveImageData(reader.GetOutput())
-                    self.volume_node.SetSpacing(1, 1, 1)
-                    logger.info(f"Loaded 2D image: {image_path}")
-                else:
-                    raise Exception("No VTK reader available")
-            
-            # NIfTI or NRRD files
-            elif image_path.lower().endswith((".nii", ".nii.gz", ".nrrd")):
-                self.volume_node = slicer.util.loadVolume(image_path)
-                logger.info(f"Loaded NIfTI/NRRD volume: {image_path}")
-            
-            # DICOM files - USE SIMPLE APPROACH
-            elif image_path.lower().endswith(".dcm"):
-                try:
-                    # Import pydicom for manual DICOM reading
-                    import pydicom
-                    
-                    # Read DICOM file
-                    ds = pydicom.dcmread(image_path)
-                    # print("DICOM tags:", ds)
-
-
-                    if "PixelData" not in ds:
-                        raise ValueError("No pixel data in DICOM file")
-                    
-                    # Get pixel array
-                    img = ds.pixel_array.astype(np.float32)
-                    
-                    # Apply rescale slope and intercept if present
-                    slope = float(getattr(ds, "RescaleSlope", 1.0))
-                    intercept = float(getattr(ds, "RescaleIntercept", 0.0))
-                    img = img * slope + intercept
-
-                    # --- Print basic histogram stats for debugging ---
-                    print("\n--- Histogram for:", image_path, "---")
-                    print("min:", float(img.min()))
-                    print("max:", float(img.max()))
-                    for p in [1, 5, 25, 50, 75, 95, 99]:
-                        print(f"p{p}:", float(np.percentile(img, p)))
-                    print("--- end ---\n")
-                    # -------------------------------------------------
-
-
-                    # --- Normalize only DES images (detected from SeriesDescription) ---
-                    series_desc = str(getattr(ds, "SeriesDescription", "")).upper()
-                    if "DES" in series_desc:
-                        L = 2000.0
-                        H = 2200.0
-                         # Window + normalize DES image
-                        img = np.clip(img, L, H)
-                        img = (img - L) * (2000.0 / (H - L))
-
-                    # -------------------------------------------------------------------
-
-                    # Check PhotometricInterpretation and flip if needed
-                    # Mammography images often need vertical flip
-                    photometric = getattr(ds, "PhotometricInterpretation", "").upper()
-                    
-                    # Flip for mammography or if no orientation info
-                    if photometric in ["MONOCHROME1", "MONOCHROME2"] or not hasattr(ds, "ImageOrientationPatient"):
-                        img = np.flipud(img)
-                    
-                     # -------------------added try this first--------end-------------
-
-
-                    # Create volume node
-                    self.volume_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
-                    self.volume_node.SetName(os.path.basename(image_path))
-                    
-                    # Update volume from numpy array
-                    slicer.util.updateVolumeFromArray(self.volume_node, img)
-
-                    
-                    
-                    # Set spacing from DICOM metadata (always 3D for Slicer)
-                    spacing = [1.0, 1.0, 1.0]
-                    if hasattr(ds, "PixelSpacing"):
-                        pixel_spacing = list(map(float, ds.PixelSpacing))
-                        spacing[0] = pixel_spacing[0]  # row spacing
-                        spacing[1] = pixel_spacing[1]  # column spacing
-                    if hasattr(ds, "SliceThickness"):
-                        spacing[2] = float(ds.SliceThickness)
-                    
-                    self.volume_node.SetSpacing(spacing)
-
-                     # ---------start----------added try this first---------------------
-
-                    # Set proper image orientation matrix
-                    if hasattr(ds, "ImageOrientationPatient"):
-                        # Get orientation from DICOM
-                        orientation = list(map(float, ds.ImageOrientationPatient))
-                        # Set IJK to RAS direction matrix
-                        
-                        directionMatrix = vtk.vtkMatrix4x4()
-                        directionMatrix.SetElement(0, 0, orientation[0])
-                        directionMatrix.SetElement(1, 0, orientation[1])
-                        directionMatrix.SetElement(2, 0, orientation[2])
-                        directionMatrix.SetElement(0, 1, orientation[3])
-                        directionMatrix.SetElement(1, 1, orientation[4])
-                        directionMatrix.SetElement(2, 1, orientation[5])
-                        self.volume_node.SetIJKToRASDirectionMatrix(directionMatrix)
-                    
-                     # -------------------added try this first--------end-------------
-
-                    
-                    logger.info(f"Loaded DICOM file manually: {image_path}")
-                    
-                except ImportError:
-                    # Fallback if pydicom not available - install it
-                    slicer.util.pip_install('pydicom')
-                    import pydicom
-                    # Retry the load
-                    return self.load_image_file(unique=unique)
-                    
-                except Exception as e:
-                    # Last resort fallback - try Slicer's loader
-                    logger.warning(f"Manual DICOM load failed: {e}, trying Slicer loader")
-                    try:
-                        self.volume_node = slicer.util.loadVolume(image_path, {"singleFile": True})
-                        if self.volume_node:
-                            logger.info(f"Loaded DICOM via Slicer: {image_path}")
-                    except Exception as e2:
-                        raise Exception(f"All DICOM loading methods failed: {e}, {e2}")
-            
-            else:
-                raise Exception(f"Unsupported file format: {image_path}")
-            
-            if self.volume_node is None:
-                raise Exception("Volume node is None after loading")
-            
-            # Set the volume as background in slice views
-            slicer.util.setSliceViewerLayers(background=self.volume_node)
-            
-            # Center the slice views on the volume
-            slicer.util.resetSliceViews()
-            
-            # Restore window/level settings
-            self.restore_window_level_settings()
-            
-            # Load segmentation if available
-            if self.segmentation_files[self.current_index] and \
-            self.segmentation_files[self.current_index].endswith((".nii", ".nrrd", ".nii.gz")):
-                try:
-                    self.segmentation_node = slicer.util.loadSegmentation(
-                        self.segmentation_files[self.current_index]
-                    )
-                    self.restore_segment_visiblity_states()
-                    self.set_segmentation_and_mask_for_segmentation_editor()
-                    logger.info(f"Loaded segmentation: {self.segmentation_files[self.current_index]}")
-                except Exception as e:
-                    logger.error(f"Failed to load segmentation: {e}")
-            
-            # Resume rendering
-            slicer.app.layoutManager().setRenderPaused(False)
-            slicer.app.processEvents()
-            
-            return 1  # Success
-            
-        except Exception as e:
-            logger.error(f"Failed to load image {image_path}: {e}")
-            slicer.util.errorDisplay(f"Could not load image: {image_path}\nError: {str(e)}")
-            slicer.app.layoutManager().setRenderPaused(False)
-            return 0  # Failure
 
     def set_segmentation_and_mask_for_segmentation_editor(self):
         slicer.app.processEvents()
@@ -1230,10 +1192,8 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         Set and observe parameter node.
         Observation is needed because when the parameter node is changed then the GUI must be updated immediately.
         """
-
         #if inputParameterNode:
         #    self.logic.setDefaultParameters(inputParameterNode)
-
         
         if self._parameterNode is not None:
             self.removeObserver(self._parameterNode, vtk.vtkCommand.ModifiedEvent, self.updateGUIFromParameterNode)
@@ -1249,14 +1209,11 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         This method is called whenever parameter node is changed.
         The module GUI is updated to show the current state of the parameter node.
         """
-
         if self._parameterNode is None or self._updatingGUIFromParameterNode:
             return
 
         # Make sure GUI changes do not call updateParameterNodeFromGUI (it could cause infinite loop)
         self._updatingGUIFromParameterNode = True
-
-
         # All the GUI updates are done
         self._updatingGUIFromParameterNode = False
 
