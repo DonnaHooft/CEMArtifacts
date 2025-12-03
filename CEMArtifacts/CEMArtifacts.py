@@ -174,8 +174,26 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Create a new segment editor widget and add it to the NiftyViewerWidget
         self._createSegmentEditorWidget_()
         
+        # Connect new radio button groups
         self.ui.radioButton_1.toggled.connect(self.updateCheckboxVisibility)
         self.ui.radioButton_2.toggled.connect(self.updateCheckboxVisibility)
+        self.ui.radioButton_similar_yes.toggled.connect(self.updateCheckboxVisibility)
+        self.ui.radioButton_similar_no.toggled.connect(self.updateCheckboxVisibility)
+        self.ui.radioButton_only_dm.toggled.connect(self.updateCheckboxVisibility)
+        self.ui.radioButton_only_cm.toggled.connect(self.updateCheckboxVisibility)
+        self.ui.radioButton_both_diff.toggled.connect(self.updateCheckboxVisibility)
+
+        # Create button groups for new radio buttons
+        self.similarityGroup = qt.QButtonGroup()
+        self.similarityGroup.addButton(self.ui.radioButton_similar_yes)
+        self.similarityGroup.addButton(self.ui.radioButton_similar_no)
+        self.similarityGroup.setExclusive(True)
+
+        self.imageSelectionGroup = qt.QButtonGroup()
+        self.imageSelectionGroup.addButton(self.ui.radioButton_only_dm)
+        self.imageSelectionGroup.addButton(self.ui.radioButton_only_cm)
+        self.imageSelectionGroup.addButton(self.ui.radioButton_both_diff)
+        self.imageSelectionGroup.setExclusive(True)
         # --- Both Save buttons trigger the same action ---
         self.ui.save_and_next.clicked.connect(self.save_and_next_clicked)
         self.ui.quick_save_and_next.clicked.connect(self.save_and_next_clicked)
@@ -268,22 +286,51 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.initializeParameterNode()
     
     def updateCheckboxVisibility(self):
-        # Show the artifact selection group only when "Yes" is selected
+        """Control visibility of all artifact selection UI elements based on user selections"""
         artifact_present = self.ui.radioButton_1.isChecked()
-        self.ui.buttongroup.setVisible(artifact_present)
         
-        # Optional: Also enable/disable checkboxes for extra safety
+        # Show similarity question only if artifacts are present
+        self.ui.buttongroup_similarity.setVisible(artifact_present)
+        
+        # Get similarity selection
+        similar_artifacts = self.ui.radioButton_similar_yes.isChecked()
+        different_artifacts = self.ui.radioButton_similar_no.isChecked()
+        
+        # Show/hide original artifact group (for similar artifacts on both images)
+        self.ui.buttongroup.setVisible(artifact_present and similar_artifacts)
+        
+        # Show/hide image selection group (only if different artifacts selected)
+        self.ui.buttongroup_image_selection.setVisible(artifact_present and different_artifacts)
+        
+        # Get image selection
+        only_dm = self.ui.radioButton_only_dm.isChecked()
+        only_cm = self.ui.radioButton_only_cm.isChecked()
+        both_diff = self.ui.radioButton_both_diff.isChecked()
+        
+        # Show/hide DM-specific artifact group
+        self.ui.buttongroup_dm.setVisible(artifact_present and different_artifacts and (only_dm or both_diff))
+        
+        # Show/hide CM-specific artifact group
+        self.ui.buttongroup_cm.setVisible(artifact_present and different_artifacts and (only_cm or both_diff))
+        
+        # Enable/disable checkboxes in original group
         for i in range(1, 8):
-            getattr(self.ui, f"checkBox_{i}").setEnabled(artifact_present)
-
-        # Show/hide the segmentation editor widget
-        self.segmentEditorWidget.setVisible(artifact_present)  # <-- THIS LINE WAS MISSING!
+            getattr(self.ui, f"checkBox_{i}").setEnabled(artifact_present and similar_artifacts)
+        
+        # Enable/disable DM checkboxes
+        for i in range(1, 8):
+            getattr(self.ui, f"checkBox_dm_{i}").setEnabled(artifact_present and different_artifacts and (only_dm or both_diff))
+        
+        # Enable/disable CM checkboxes
+        for i in range(1, 8):
+            getattr(self.ui, f"checkBox_cm_{i}").setEnabled(artifact_present and different_artifacts and (only_cm or both_diff))
+        
+        # Show/hide the segmentation editor widget (only if artifacts present)
+        self.segmentEditorWidget.setVisible(artifact_present)
         
         # Show/hide the "Save Outline" button
         self.ui.overwrite_mask.setVisible(artifact_present)
         self.ui.quick_save_and_next.setVisible(self.ui.radioButton_2.isChecked())
-        
-       
 
     # def overwrite_mask_clicked(self):
     #     # overwrite self.segmentEditorWidget.segmentationNode()
@@ -659,13 +706,14 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         ann_path = os.path.join(directory, "annotations.csv")
         if os.path.exists(ann_path):
             ann_csv = pd.read_csv(ann_path, header=None, index_col=False,
-                                 names=["base_name", "artifacts", "other", "mask_path", "mask_status"])
+                                 names=["base_name", "artifact_type", "dm_artifacts","cm_artifacts", "other", "mask_path", "mask_status"])
             
             completed_bases = set(ann_csv['base_name'].values)
             self.image_pairs = [p for p in self.image_pairs if p['base_name'] not in completed_bases]
             self.n_pairs = len(self.image_pairs)
             logger.info(f'Restored session: {self.n_pairs} pairs remaining')
         
+    
         self.ui.status_checked.setText(f"Checked: {self.current_index} / {self.n_pairs}")
         
         if self.n_pairs > 0:
@@ -675,46 +723,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
      # ______________________________________________________________________________________________________________________________________ ___________________________________________________________________ 
 
 # 
-   
-    # def setupSideBySideLayout(self, dm_volume, cm_volume):
-    #     """Setup the side-by-side layout with DM on left, CM on right"""
-    #     # Always ensure the layout is registered first
-    #     lm = slicer.app.layoutManager()
 
-    #     layout_id = self.ensureCustomLayoutAvailable()
-        
-    #     # Force set the layout (this is critical after scene changes)
-    #     lm.setLayout(layout_id)
-        
-    #     def views_ready():
-    #         return lm.sliceWidget("DM") is not None and lm.sliceWidget("CM") is not None
-        
-    #     def wire_volumes():
-    #         for tag, vol in [("DM", dm_volume), ("CM", cm_volume)]:
-    #             sw = lm.sliceWidget(tag)
-    #             if not sw:
-    #                 continue
-                    
-    #             logic = sw.sliceLogic()
-    #             comp = logic.GetSliceCompositeNode()
-    #             sn = logic.GetSliceNode()
-                
-    #             comp.SetBackgroundVolumeID(vol.GetID())
-    #             sn.SetOrientationToDefault()
-    #             sn.UpdateMatrices()
-                
-    #             logic.FitSliceToAll()
-    #             fov = sn.GetFieldOfView()
-    #             sn.SetFieldOfView(fov[0]*0.88, fov[1]*0.88, fov[2])
-        
-    #     def poll():
-    #         if views_ready():
-    #             wire_volumes()
-    #         else:
-    #             qt.QTimer.singleShot(50, poll)
-        
-    #     qt.QTimer.singleShot(0, poll)
-    
     
     def setupSideBySideLayout(self, dm_volume, cm_volume):
         """Setup the side-by-side layout with DM on left, CM on right using built-in Slicer layout"""
@@ -928,65 +937,272 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     #DO these have to be ina ccordance iwht button from .ui? ie or is labels for csv files?
 # ______________________________________________________________________________________________________________________________________ ___________________________________________________________________ 
 
-    def save_and_next_clicked(self):
+    # def save_and_next_clicked(self):
 
-        # # Prevent re-entry (double clicks, UI event glitches)
-        # if self._is_loading:
-        #     return
-        # self._is_loading = True
+    #     # # Prevent re-entry (double clicks, UI event glitches)
+    #     # if self._is_loading:
+    #     #     return
+    #     # self._is_loading = True
 
-        try:
+    #     try:
             
+    #         # 1. Detect artifact state
+    #         artifact_present = None
+    #         if self.ui.radioButton_1.isChecked():  # Yes
+    #             artifact_present = True
+    #         elif self.ui.radioButton_2.isChecked():  # No
+    #             artifact_present = False
+
+    #         if artifact_present is None:
+    #             # slicer.util.errorDisplay("Please select Yes or No before continuing.")
+    #             return
+            
+    #         # 2. Build annotation string
+            
+    #         if not artifact_present:
+    #             annotation = "No artifact"
+    #             artifact_list = []
+    #         else:
+    #             artifact_list = []
+    #             for i in range(1, 8):
+    #                 checkbox = getattr(self.ui, f"checkBox_{i}")
+    #                 if checkbox.isChecked():
+    #                     artifact_list.append(i)
+
+    #             if not artifact_list:
+    #                 slicer.util.warningDisplay(
+    #                     "You selected 'Yes' but no artifact type — please choose at least one."
+    #                 )
+    #                 return
+
+    #             annotation = self._artifacts_to_str(artifact_list)
+
+            
+    #         # 3. Save comment
+    #         comment_text = self.ui.comment.toPlainText()
+    #         current_pair = self.image_pairs[self.current_index]
+    #         # self.likert_scores.append([self.current_index, annotation, comment_text])
+
+            
+    #         # 4. Append to CSV
+    #         # head, tail = os.path.split(self.nifti_files[self.current_index])
+    #         # data = {
+    #         #     'file': [self.nifti_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
+    #         #     'artifacts': [annotation],
+    #         #     'other': [comment_text],
+    #         #     'mask_path': [self.segmentation_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
+    #         #     'mask_status': [self._numerical_status_to_str(self.seg_mask_status[self.current_index])]
+    #         # }
+    #         data = {
+    #             'base_name': [current_pair['base_name']],
+    #             'artifacts': [annotation],
+    #             'other': [comment_text],
+    #             'mask_path': [""],
+    #             'mask_status': ["No mask"]
+    #         }
+
+    #         df = pd.DataFrame(data)
+    #         df.to_csv(self.joinpath(self.directory, "annotations.csv"),
+    #                 mode='a', index=False, header=False)
+
+            
+    #         # # 5. Store window/level + visibility state
+    #         # if self.volume_node and self.volume_node.GetDisplayNode():
+    #         #     self.store_current_window_level_settings()
+
+    #         # if self.segmentation_node:
+    #         #     self.store_segment_visiblity_states()
+
+            
+    #         # # 6. COMPUTE NEXT INDEX SAFELY
+    #         # if self.current_index >= self.n_files - 1:
+    #         #     print("All files checked")
+    #         #     self.finish_flag = True
+    #         #     return
+
+    #         # # Unique mode → skip already checked subjects -pa
+    #         # if self.unique_case_flag:
+    #         #     next_index = self.current_index + 1
+
+    #         #     while (
+    #         #         next_index < self.n_files
+    #         #         and self.id_subs[next_index] in self.id_subs_checked
+    #         #     ):
+    #         #         next_index += 1
+
+    #         #     if next_index >= self.n_files:
+    #         #         print("All files checked")
+    #         #         self.finish_flag = True
+    #         #         return
+
+    #         #     self.current_index = next_index
+
+    #         # # Normal mode
+    #         # else:
+    #         #     self.current_index += 1
+
+            
+    #         # 7. RESET UI BEFORE LOADING NEXT IMAGE
+    #         # reset artifacts
+    #         for i in range(1, 8):
+    #             getattr(self.ui, f"checkBox_{i}").setChecked(False)
+                
+    #         ## Reset Yes/No radio buttons safely
+    #         self.yesNoGroup.setExclusive(False)
+    #         self.ui.radioButton_1.setChecked(False)
+    #         self.ui.radioButton_2.setChecked(False)
+    #         self.ui.comment.clear()
+    #         slicer.app.processEvents()
+    #         self.yesNoGroup.setExclusive(True)
+    #         slicer.app.processEvents()
+            
+    #         print("idx & pairs:",self.current_index, self.n_pairs)
+    #         # Move to next pair
+    #         if self.current_index >= self.n_pairs - 1:
+                
+    #             print("All pairs checked")
+    #             return
+    #         else:
+    #             self.current_index += 1
+    #             self.load_image_pair()
+            
+    #         self.ui.status_checked.setText(
+    #             f"Checked: {self.current_index} / {self.n_pairs}"
+    #         )
+    #         # # 8. LOAD NEXT IMAGE EXACTLY ONCE
+    #         # if self.unique_case_flag:
+    #         #     self.load_image_file(unique=True)
+    #         # else:
+    #         #     self.load_image_file(unique=False)
+
+            
+
+    #     finally:
+    #         # Ensure unlock even if an exception happens
+    #         self._is_loading = False
+
+
+    def save_and_next_clicked(self):
+        try:
             # 1. Detect artifact state
             artifact_present = None
-            if self.ui.radioButton_1.isChecked():  # Yes
+            if self.ui.radioButton_1.isChecked():
                 artifact_present = True
-            elif self.ui.radioButton_2.isChecked():  # No
+            elif self.ui.radioButton_2.isChecked():
                 artifact_present = False
 
             if artifact_present is None:
-                # slicer.util.errorDisplay("Please select Yes or No before continuing.")
                 return
             
-            # 2. Build annotation string
+            # 2. Build annotation strings for DM and CM
+            dm_annotation = "No artifact"
+            cm_annotation = "No artifact"
+            artifact_type = "none"
             
             if not artifact_present:
-                annotation = "No artifact"
-                artifact_list = []
+                dm_annotation = "No artifact"
+                cm_annotation = "No artifact"
+                artifact_type = "none"
             else:
-                artifact_list = []
-                for i in range(1, 8):
-                    checkbox = getattr(self.ui, f"checkBox_{i}")
-                    if checkbox.isChecked():
-                        artifact_list.append(i)
-
-                if not artifact_list:
-                    slicer.util.warningDisplay(
-                        "You selected 'Yes' but no artifact type — please choose at least one."
-                    )
+                # Check if similar or different artifacts
+                similar_artifacts = self.ui.radioButton_similar_yes.isChecked()
+                different_artifacts = self.ui.radioButton_similar_no.isChecked()
+                
+                if not similar_artifacts and not different_artifacts:
+                    slicer.util.warningDisplay("Please specify if artifacts are similar or different between DM and CM.")
                     return
-
-                annotation = self._artifacts_to_str(artifact_list)
-
+                
+                if similar_artifacts:
+                    # Use original checkboxes - same artifacts on both images
+                    artifact_list = []
+                    for i in range(1, 8):
+                        checkbox = getattr(self.ui, f"checkBox_{i}")
+                        if checkbox.isChecked():
+                            artifact_list.append(i)
+                    
+                    if not artifact_list:
+                        slicer.util.warningDisplay("You selected 'Yes' but no artifact type – please choose at least one.")
+                        return
+                    
+                    annotation_str = self._artifacts_to_str(artifact_list)
+                    dm_annotation = annotation_str
+                    cm_annotation = annotation_str
+                    artifact_type = "similar"
+                    
+                elif different_artifacts:
+                    # Check which image(s) have artifacts
+                    only_dm = self.ui.radioButton_only_dm.isChecked()
+                    only_cm = self.ui.radioButton_only_cm.isChecked()
+                    both_diff = self.ui.radioButton_both_diff.isChecked()
+                    
+                    if not (only_dm or only_cm or both_diff):
+                        slicer.util.warningDisplay("Please specify which image(s) contain artifacts.")
+                        return
+                    
+                    if only_dm:
+                        # Check DM checkboxes
+                        dm_artifact_list = []
+                        for i in range(1, 8):
+                            checkbox = getattr(self.ui, f"checkBox_dm_{i}")
+                            if checkbox.isChecked():
+                                dm_artifact_list.append(i)
+                        
+                        if not dm_artifact_list:
+                            slicer.util.warningDisplay("Please select at least one artifact type for DM.")
+                            return
+                        
+                        dm_annotation = self._artifacts_to_str(dm_artifact_list)
+                        cm_annotation = "No artifact"
+                        artifact_type = "only_dm"
+                        
+                    elif only_cm:
+                        # Check CM checkboxes
+                        cm_artifact_list = []
+                        for i in range(1, 8):
+                            checkbox = getattr(self.ui, f"checkBox_cm_{i}")
+                            if checkbox.isChecked():
+                                cm_artifact_list.append(i)
+                        
+                        if not cm_artifact_list:
+                            slicer.util.warningDisplay("Please select at least one artifact type for CM.")
+                            return
+                        
+                        dm_annotation = "No artifact"
+                        cm_annotation = self._artifacts_to_str(cm_artifact_list)
+                        artifact_type = "only_cm"
+                        
+                    elif both_diff:
+                        # Check both DM and CM checkboxes
+                        dm_artifact_list = []
+                        for i in range(1, 8):
+                            checkbox = getattr(self.ui, f"checkBox_dm_{i}")
+                            if checkbox.isChecked():
+                                dm_artifact_list.append(i)
+                        
+                        cm_artifact_list = []
+                        for i in range(1, 8):
+                            checkbox = getattr(self.ui, f"checkBox_cm_{i}")
+                            if checkbox.isChecked():
+                                cm_artifact_list.append(i)
+                        
+                        if not dm_artifact_list or not cm_artifact_list:
+                            slicer.util.warningDisplay("Please select at least one artifact type for both DM and CM.")
+                            return
+                        
+                        dm_annotation = self._artifacts_to_str(dm_artifact_list)
+                        cm_annotation = self._artifacts_to_str(cm_artifact_list)
+                        artifact_type = "both_different"
             
             # 3. Save comment
             comment_text = self.ui.comment.toPlainText()
             current_pair = self.image_pairs[self.current_index]
-            # self.likert_scores.append([self.current_index, annotation, comment_text])
-
             
-            # 4. Append to CSV
-            # head, tail = os.path.split(self.nifti_files[self.current_index])
-            # data = {
-            #     'file': [self.nifti_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
-            #     'artifacts': [annotation],
-            #     'other': [comment_text],
-            #     'mask_path': [self.segmentation_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
-            #     'mask_status': [self._numerical_status_to_str(self.seg_mask_status[self.current_index])]
-            # }
+            # 4. Append to CSV with separate DM and CM columns
             data = {
                 'base_name': [current_pair['base_name']],
-                'artifacts': [annotation],
+                'artifact_type': [artifact_type],
+                'dm_artifacts': [dm_annotation],
+                'cm_artifacts': [cm_annotation],
                 'other': [comment_text],
                 'mask_path': [""],
                 'mask_status': ["No mask"]
@@ -995,63 +1211,48 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             df = pd.DataFrame(data)
             df.to_csv(self.joinpath(self.directory, "annotations.csv"),
                     mode='a', index=False, header=False)
-
             
-            # # 5. Store window/level + visibility state
-            # if self.volume_node and self.volume_node.GetDisplayNode():
-            #     self.store_current_window_level_settings()
-
-            # if self.segmentation_node:
-            #     self.store_segment_visiblity_states()
-
-            
-            # # 6. COMPUTE NEXT INDEX SAFELY
-            # if self.current_index >= self.n_files - 1:
-            #     print("All files checked")
-            #     self.finish_flag = True
-            #     return
-
-            # # Unique mode → skip already checked subjects -pa
-            # if self.unique_case_flag:
-            #     next_index = self.current_index + 1
-
-            #     while (
-            #         next_index < self.n_files
-            #         and self.id_subs[next_index] in self.id_subs_checked
-            #     ):
-            #         next_index += 1
-
-            #     if next_index >= self.n_files:
-            #         print("All files checked")
-            #         self.finish_flag = True
-            #         return
-
-            #     self.current_index = next_index
-
-            # # Normal mode
-            # else:
-            #     self.current_index += 1
-
-            
-            # 7. RESET UI BEFORE LOADING NEXT IMAGE
-            # reset artifacts
+            # 5. RESET UI BEFORE LOADING NEXT IMAGE
+            # Reset original artifact checkboxes
             for i in range(1, 8):
                 getattr(self.ui, f"checkBox_{i}").setChecked(False)
-                
-            ## Reset Yes/No radio buttons safely
+            
+            # Reset DM artifact checkboxes
+            for i in range(1, 8):
+                getattr(self.ui, f"checkBox_dm_{i}").setChecked(False)
+            
+            # Reset CM artifact checkboxes
+            for i in range(1, 8):
+                getattr(self.ui, f"checkBox_cm_{i}").setChecked(False)
+            
+            # Reset all radio button groups
             self.yesNoGroup.setExclusive(False)
             self.ui.radioButton_1.setChecked(False)
             self.ui.radioButton_2.setChecked(False)
+            self.yesNoGroup.setExclusive(True)
+            
+            self.similarityGroup.setExclusive(False)
+            self.ui.radioButton_similar_yes.setChecked(False)
+            self.ui.radioButton_similar_no.setChecked(False)
+            self.similarityGroup.setExclusive(True)
+            
+            self.imageSelectionGroup.setExclusive(False)
+            self.ui.radioButton_only_dm.setChecked(False)
+            self.ui.radioButton_only_cm.setChecked(False)
+            self.ui.radioButton_both_diff.setChecked(False)
+            self.imageSelectionGroup.setExclusive(True)
+            
             self.ui.comment.clear()
             slicer.app.processEvents()
-            self.yesNoGroup.setExclusive(True)
-            slicer.app.processEvents()
             
-            print("idx & pairs:",self.current_index, self.n_pairs)
             # Move to next pair
             if self.current_index >= self.n_pairs - 1:
-                
                 print("All pairs checked")
+                qt.QMessageBox.information(
+                    slicer.util.mainWindow(),
+                    "Complete",
+                    "All image pairs have been reviewed!"
+                )
                 return
             else:
                 self.current_index += 1
@@ -1060,20 +1261,9 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.ui.status_checked.setText(
                 f"Checked: {self.current_index} / {self.n_pairs}"
             )
-            # # 8. LOAD NEXT IMAGE EXACTLY ONCE
-            # if self.unique_case_flag:
-            #     self.load_image_file(unique=True)
-            # else:
-            #     self.load_image_file(unique=False)
-
-            
 
         finally:
-            # Ensure unlock even if an exception happens
             self._is_loading = False
-
-
-
 
     def store_current_window_level_settings(self):
         """Store current HU window and level settings."""
