@@ -380,148 +380,164 @@
                 </widget>
               </widget>
             </item>
-            <item row="7" column="0">
-              <widget class="QGroupBox" name="buttongroup_0">
-                <property name="minimumSize">
-                  <size>
-                    <width>0</width>
-                    <height>65</height>
-                  </size>
-                </property>
-                <property name="title">
-                  <string>Artifact Present? </string>
-                </property>
-                <widget class="QRadioButton" name="radioButton_1">
-                  <property name="geometry">
-                    <rect>
-                      <x>10</x>
-                      <y>20</y>
-                      <width>100</width>
-                      <height>20</height>
-                    </rect>
-                  </property>
-                  <property name="text">
-                    <string>Yes</string>
-                  </property>
-                </widget>
-                <widget class="QRadioButton" name="radioButton_2">
-                  <property name="geometry">
-                    <rect>
-                      <x>10</x>
-                      <y>40</y>
-                      <width>100</width>
-                      <height>20</height>
-                    </rect>
-                  </property>
-                  <property name="text">
-                    <string>No</string>
-                  </property>
-                </widget>
+
+            <item row="7" column="0" colspan="4">
+              <widget class="QWidget" name="row7Container" native="true">
+                <layout class="QHBoxLayout" name="row7Layout">
+                  <item>
+                    <widget class="QGroupBox" name="buttongroup_0">
+                      <property name="minimumSize">
+                        <size>
+                          <width>0</width>
+                          <height>65</height>
+                        </size>
+                      </property>
+                      <property name="title">
+                        <string>Artifact Present? </string>
+                      </property>
+                      <widget class="QRadioButton" name="radioButton_1">
+                        <property name="geometry">
+                          <rect>
+                            <x>10</x>
+                            <y>20</y>
+                            <width>100</width>
+                            <height>20</height>
+                          </rect>
+                        </property>
+                        <property name="text">
+                          <string>Yes</string>
+                        </property>
+                      </widget>
+                      <widget class="QRadioButton" name="radioButton_2">
+                        <property name="geometry">
+                          <rect>
+                            <x>10</x>
+                            <y>40</y>
+                            <width>100</width>
+                            <height>20</height>
+                          </rect>
+                        </property>
+                        <property name="text">
+                          <string>No</string>
+                        </property>
+                      </widget>
+                    </widget>
+                  </item>
+
+                  <item>
+                    <widget class="QGroupBox" name="buttongroup_similarity">
+                      <property name="minimumSize">
+                        <size>
+                          <width>0</width>
+                          <height>65</height>
+                        </size>
+                      </property>
+                      <property name="visible">
+                        <bool>false</bool>
+                      </property>
+                      <property name="title">
+                        <string>Same Artifact(s) DM/CM?</string>
+                      </property>
+                      <widget class="QRadioButton" name="radioButton_similar_yes">
+                        <property name="geometry">
+                          <rect>
+                            <x>10</x>
+                            <y>20</y>
+                            <width>60</width>
+                            <height>20</height>
+                          </rect>
+                        </property>
+                        <property name="text">
+                          <string>Yes</string>
+                        </property>
+                      </widget>
+                      <widget class="QRadioButton" name="radioButton_similar_no">
+                        <property name="geometry">
+                          <rect>
+                            <x>10</x>
+                            <y>40</y>
+                            <width>60</width>
+                            <height>20</height>
+                          </rect>
+                        </property>
+                        <property name="text">
+                          <string>No</string>
+                        </property>
+                      </widget>
+                    </widget>
+                  </item>
+
+                  <item>
+                    <widget class="QGroupBox" name="buttongroup_image_selection">
+                      <property name="minimumSize">
+                        <size>
+                          <width>180</width>
+                          <height>90</height>
+                        </size>
+                      </property>
+                      <property name="visible">
+                        <bool>false</bool>
+                      </property>
+                      <property name="title">
+                        <string>Which Image(s)?</string>
+                      </property>
+                      <widget class="QRadioButton" name="radioButton_only_dm">
+                        <property name="geometry">
+                          <rect>
+                            <x>10</x>
+                            <y>20</y>
+                            <width>100</width>
+                            <height>20</height>
+                          </rect>
+                        </property>
+                        <property name="text">
+                          <string>Only DM</string>
+                        </property>
+                      </widget>
+                      <widget class="QRadioButton" name="radioButton_only_cm">
+                        <property name="geometry">
+                          <rect>
+                            <x>10</x>
+                            <y>40</y>
+                            <width>100</width>
+                            <height>20</height>
+                          </rect>
+                        </property>
+                        <property name="text">
+                          <string>Only CM</string>
+                        </property>
+                      </widget>
+                      <widget class="QRadioButton" name="radioButton_both_diff">
+                        <property name="geometry">
+                          <rect>
+                            <x>10</x>
+                            <y>60</y>
+                            <width>180</width>
+                            <height>20</height>
+                          </rect>
+                        </property>
+                        <property name="text">
+                          <string>Both, Different Artifacts</string>
+                        </property>
+                      </widget>
+                    </widget>
+                  </item>
+
+                  <item>
+                    <spacer name="horizontalSpacer">
+                      <property name="orientation">
+                        <enum>Qt::Horizontal</enum>
+                      </property>
+                      <property name="sizeHint" stdset="0">
+                        <size>
+                          <width>40</width>
+                          <height>20</height>
+                        </size>
+                      </property>
+                    </spacer>
+                  </item>
+                </layout>
               </widget>
-            </item>
-            <item row="7" column="1">
-              <widget class="QGroupBox" name="buttongroup_similarity">
-                <property name="minimumSize">
-                  <size>
-                    <width>0</width>
-                    <height>65</height>
-                  </size>
-                </property>
-                <property name="visible">
-                  <bool>false</bool>
-                </property>
-                <property name="title">
-                  <string>Similar Artifact(s) on DM and CM Image?</string>
-                </property>
-                <widget class="QRadioButton" name="radioButton_similar_yes">
-                  <property name="geometry">
-                    <rect>
-                      <x>10</x>
-                      <y>20</y>
-                      <width>100</width>
-                      <height>20</height>
-                    </rect>
-                  </property>
-                  <property name="text">
-                    <string>Yes</string>
-                  </property>
-                </widget>
-                <widget class="QRadioButton" name="radioButton_similar_no">
-                  <property name="geometry">
-                    <rect>
-                      <x>10</x>
-                      <y>40</y>
-                      <width>100</width>
-                      <height>20</height>
-                    </rect>
-                  </property>
-                  <property name="text">
-                    <string>No</string>
-                  </property>
-                </widget>
-              </widget>
-            </item>
-            <item row="7" column="2">
-              <widget class="QGroupBox" name="buttongroup_image_selection">
-                <property name="minimumSize">
-                  <size>
-                    <width>0</width>
-                    <height>90</height>
-                  </size>
-                </property>
-                <property name="visible">
-                  <bool>false</bool>
-                </property>
-                <property name="title">
-                  <string>Which Image(s)?</string>
-                </property>
-                <widget class="QRadioButton" name="radioButton_only_dm">
-                  <property name="geometry">
-                    <rect>
-                      <x>10</x>
-                      <y>20</y>
-                      <width>100</width>
-                      <height>20</height>
-                    </rect>
-                  </property>
-                  <property name="text">
-                    <string>Only DM</string>
-                  </property>
-                </widget>
-                <widget class="QRadioButton" name="radioButton_only_cm">
-                  <property name="geometry">
-                    <rect>
-                      <x>10</x>
-                      <y>40</y>
-                      <width>100</width>
-                      <height>20</height>
-                    </rect>
-                  </property>
-                  <property name="text">
-                    <string>Only CM</string>
-                  </property>
-                </widget>
-                <widget class="QRadioButton" name="radioButton_both_diff">
-                  <property name="geometry">
-                    <rect>
-                      <x>10</x>
-                      <y>60</y>
-                      <width>100</width>
-                      <height>20</height>
-                    </rect>
-                  </property>
-                  <property name="text">
-                    <string>Both, Different Artifacts</string>
-                  </property>
-                </widget>
-              </widget>
-            </item>
-            <item row="7" column="3">
-              <spacer name="horizontalSpacer">
-                <property name="orientation">
-                  <enum>Qt::Horizontal</enum>
-                </property>
-              </spacer>
             </item>
 
             <item>
