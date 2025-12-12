@@ -555,9 +555,11 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             # Save combined .npy file
             npy_filename = f"mask_{base_name}{suffix}.npy"
             npy_path = os.path.join(self.directory, npy_filename)
-            np.save(npy_path, combined_mask)
+            # Rotate 90 degrees counterclockwise for each channel
+            combined_mask_rotated = np.rot90(combined_mask, k=1, axes=(0, 1))
+            np.save(npy_path, combined_mask_rotated)
             logging.getLogger('CEMArtifacts').info(f"Saved combined mask: {npy_path}")
-            print(f"[DEBUG] Saved .npy file: {npy_path}")
+            print(f"[DEBUG] Saved .npy file (rot90): {npy_path}")
             
             # Save individual PNG files for each artifact that has content
             try:
@@ -581,11 +583,15 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                     mask_data = combined_mask[:, :, class_idx] * 255
                     print(f"[DEBUG] Mask data range: min={mask_data.min()}, max={mask_data.max()}")
                     
-                    mask_img = Image.fromarray(mask_data.T.astype(np.uint8))  # Transpose back for image
+                    # Transpose and flip vertically
+                    mask_data_transposed = mask_data.T
+                    mask_data_flipped = np.flipud(mask_data_transposed)
+                    
+                    mask_img = Image.fromarray(mask_data_flipped.astype(np.uint8))
                     print(f"[DEBUG] PIL Image size: {mask_img.size}, mode: {mask_img.mode}")
                     
                     mask_img.save(png_path)
-                    print(f"[DEBUG] Successfully saved: {png_path}")
+                    print(f"[DEBUG] Successfully saved (flipped): {png_path}")
                     logging.getLogger('CEMArtifacts').info(f"Saved individual mask: {png_filename}")
             
             return npy_path
