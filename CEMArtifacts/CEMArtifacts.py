@@ -97,6 +97,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.id_subs_checked = []
         self.unique_case_flag=False
         self.finish_flag = False
+        self._segmentation_update_timer = None  # Will be created in setup()
 
 
         self.pointListNode = None
@@ -175,25 +176,24 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self._createSegmentEditorWidget_()
         
         # Connect new radio button groups
-        self.ui.radioButton_1.toggled.connect(self.updateCheckboxVisibility)
-        self.ui.radioButton_2.toggled.connect(self.updateCheckboxVisibility)
-        self.ui.radioButton_similar_yes.toggled.connect(self.updateCheckboxVisibility)
-        self.ui.radioButton_similar_no.toggled.connect(self.updateCheckboxVisibility)
-        self.ui.radioButton_only_dm.toggled.connect(self.updateCheckboxVisibility)
-        self.ui.radioButton_only_cm.toggled.connect(self.updateCheckboxVisibility)
-        self.ui.radioButton_both_diff.toggled.connect(self.updateCheckboxVisibility)
+        self.ui.radioButton_dm_yes.toggled.connect(self.updateCheckboxVisibility)
+        self.ui.radioButton_dm_no.toggled.connect(self.updateCheckboxVisibility)
+        self.ui.radioButton_cm_yes.toggled.connect(self.updateCheckboxVisibility)
+        self.ui.radioButton_cm_no.toggled.connect(self.updateCheckboxVisibility)
 
         # Create button groups for new radio buttons
-        self.similarityGroup = qt.QButtonGroup()
-        self.similarityGroup.addButton(self.ui.radioButton_similar_yes)
-        self.similarityGroup.addButton(self.ui.radioButton_similar_no)
-        self.similarityGroup.setExclusive(True)
+        self.dmPresentGroup = qt.QButtonGroup()
+        self.dmPresentGroup.addButton(self.ui.radioButton_dm_yes)
+        self.dmPresentGroup.addButton(self.ui.radioButton_dm_no)
+        self.dmPresentGroup.setExclusive(True)
 
-        self.imageSelectionGroup = qt.QButtonGroup()
-        self.imageSelectionGroup.addButton(self.ui.radioButton_only_dm)
-        self.imageSelectionGroup.addButton(self.ui.radioButton_only_cm)
-        self.imageSelectionGroup.addButton(self.ui.radioButton_both_diff)
-        self.imageSelectionGroup.setExclusive(True)
+        self.cmPresentGroup = qt.QButtonGroup()
+        self.cmPresentGroup.addButton(self.ui.radioButton_cm_yes)
+        self.cmPresentGroup.addButton(self.ui.radioButton_cm_no)
+        self.cmPresentGroup.setExclusive(True)
+
+
+
         # --- Both Save buttons trigger the same action ---
         self.ui.save_and_next.clicked.connect(self.save_and_next_clicked)
         self.ui.quick_save_and_next.clicked.connect(self.save_and_next_clicked)
@@ -205,16 +205,21 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         save_shortcut_mac = qt.QShortcut(qt.QKeySequence("Meta+Return"), self.parent)
         save_shortcut_mac.activated.connect(self.save_and_next_clicked)
 
+        # Connect artifact checkboxes with debouncing to avoid rapid re-triggering
+        # self._segmentation_update_timer = qt.QTimer()
+        # self._segmentation_update_timer.setSingleShot(True)
+        # self._segmentation_update_timer.timeout.connect(self.setup_segmentation_for_current_selection)
 
-        # Create real button group for Yes/No
-        self.yesNoGroup = qt.QButtonGroup()
-        self.yesNoGroup.addButton(self.ui.radioButton_1)
-        self.yesNoGroup.addButton(self.ui.radioButton_2)
-        self.yesNoGroup.setExclusive(True)
+        # for i in range(1, 10):
+        #     getattr(self.ui, f"checkBox_dm_{i}").toggled.connect(
+        #         lambda checked, timer=self._segmentation_update_timer: timer.start(300)
+        #     )
+        #     getattr(self.ui, f"checkBox_cm_{i}").toggled.connect(
+        #         lambda checked, timer=self._segmentation_update_timer: timer.start(300)
+        #     )
 
 
         self.updateCheckboxVisibility()  # initialize multiselect checkboxes
-        
 
         
         #self.segmentEditorWidgetWidget.volumes.collapsed = True
@@ -248,6 +253,24 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             'Smoothing','Scissors',
             'Islands','Logical operators',
             'Mask volume'])
+        
+        # Add instructions label
+        instructions = qt.QLabel(
+            "<b>Segmentation Instructions:</b><br>"
+            "1. Select artifact checkboxes to indicate which are present<br>"
+            "2. Click 'Add' in Segment Editor to create a segment<br>"
+            "3. Name segments EXACTLY as: <b>Artifact_Name_DM</b> or <b>Artifact_Name_CM</b><br>"
+            "   Examples: 'Skin_Line_DM', 'Calcifications_CM'<br>"
+            "   <b>For both_different:</b> Create separate segments for each image type<br>"
+            "4. Paint the segmentation on the PRIMARY view<br>"
+            "5. <b>IMPORTANT:</b> Click 'Save Outline' to save masks<br>"
+            "6. Masks are saved separately for DM and CM based on segment names"
+        )
+
+        instructions.setWordWrap(True)
+        instructions.setStyleSheet("QLabel { padding: 10px; border: 1px solid #cccc00; }")
+        self.layout.addWidget(instructions)
+
         self.layout.addWidget(self.segmentEditorWidget) 
 
         # Hide the segmentation editor by default
@@ -271,6 +294,9 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         
         # Set parameter set node if absent
         self.selectParameterNode()
+        if self.parameterSetNode:
+            self.parameterSetNode.SetOverwriteMode(slicer.vtkMRMLSegmentEditorNode.OverwriteNone) #  heck fi this is neded really?
+    
         self.segmentEditorWidget.updateWidgetFromMRML()
 
         # If no segmentation node exists then create one so that the user does not have to create one manually
@@ -286,95 +312,309 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.initializeParameterNode()
     
     def updateCheckboxVisibility(self):
-        """Control visibility of all artifact selection UI elements based on user selections"""
-        artifact_present = self.ui.radioButton_1.isChecked()
+        """Control visibility of artifact selection UI based on DM/CM artifact presence"""
+        dm_artifacts_present = self.ui.radioButton_dm_yes.isChecked()
+        cm_artifacts_present = self.ui.radioButton_cm_yes.isChecked()
+        dm_no_artifacts = self.ui.radioButton_dm_no.isChecked()
+        cm_no_artifacts = self.ui.radioButton_cm_no.isChecked()
         
-        # Show similarity question only if artifacts are present
-        self.ui.buttongroup_similarity.setVisible(artifact_present)
+        # Show/hide DM artifact checkboxes
+        self.ui.buttongroup_dm.setVisible(dm_artifacts_present)
         
-        # Get similarity selection
-        similar_artifacts = self.ui.radioButton_similar_yes.isChecked()
-        different_artifacts = self.ui.radioButton_similar_no.isChecked()
+        # Show/hide CM artifact checkboxes
+        self.ui.buttongroup_cm.setVisible(cm_artifacts_present)
         
-        # Show/hide original artifact group (for similar artifacts on both images)
-        self.ui.buttongroup.setVisible(artifact_present and similar_artifacts)
+        # Hide the original artifact group (not needed in new logic)
+        # self.ui.buttongroup.setVisible(False)
         
-        # Show/hide image selection group (only if different artifacts selected)
-        self.ui.buttongroup_image_selection.setVisible(artifact_present and different_artifacts)
-        
-        # Get image selection
-        only_dm = self.ui.radioButton_only_dm.isChecked()
-        only_cm = self.ui.radioButton_only_cm.isChecked()
-        both_diff = self.ui.radioButton_both_diff.isChecked()
-        
-        # Show/hide DM-specific artifact group
-        self.ui.buttongroup_dm.setVisible(artifact_present and different_artifacts and (only_dm or both_diff))
-        
-        # Show/hide CM-specific artifact group
-        self.ui.buttongroup_cm.setVisible(artifact_present and different_artifacts and (only_cm or both_diff))
-        
-        # Enable/disable checkboxes in original group
-        for i in range(1, 8):
-            getattr(self.ui, f"checkBox_{i}").setEnabled(artifact_present and similar_artifacts)
+        # Show quick save button only if both are "No"
+        both_no_artifacts = dm_no_artifacts and cm_no_artifacts
+        self.ui.quick_save_and_next.setVisible(both_no_artifacts)
         
         # Enable/disable DM checkboxes
-        for i in range(1, 8):
-            getattr(self.ui, f"checkBox_dm_{i}").setEnabled(artifact_present and different_artifacts and (only_dm or both_diff))
+        for i in range(1, 10):
+            getattr(self.ui, f"checkBox_dm_{i}").setEnabled(dm_artifacts_present)
         
         # Enable/disable CM checkboxes
-        for i in range(1, 8):
-            getattr(self.ui, f"checkBox_cm_{i}").setEnabled(artifact_present and different_artifacts and (only_cm or both_diff))
+        for i in range(1, 10):
+            getattr(self.ui, f"checkBox_cm_{i}").setEnabled(cm_artifacts_present)
         
-        # Show/hide the segmentation editor widget (only if artifacts present)
-        self.segmentEditorWidget.setVisible(artifact_present)
+        # Show/hide the segmentation editor (only if any artifacts present)
+        any_artifacts = dm_artifacts_present or cm_artifacts_present
+        self.segmentEditorWidget.setVisible(any_artifacts)
         
         # Show/hide the "Save Outline" button
-        self.ui.overwrite_mask.setVisible(artifact_present)
-        self.ui.quick_save_and_next.setVisible(self.ui.radioButton_2.isChecked())
+        self.ui.overwrite_mask.setVisible(any_artifacts)
+        
+        # Setup segmentation when visibility changes
+        # if any_artifacts:
+        #     self.setup_segmentation_for_current_selection()
+        # Create segmentation node when artifacts are indicated
+        if any_artifacts:
+            print(f"[DEBUG] Artifacts present, ensuring segmentation node exists")
+            self._ensure_segmentation_node_exists()
+        else:
+            print(f"[DEBUG] No artifacts indicated")
 
-    # def overwrite_mask_clicked(self):
-    #     # overwrite self.segmentEditorWidget.segmentationNode()
-    #     self.segmentation_node = slicer.mrmlScene.GetFirstNodeByClass('vtkMRMLSegmentationNode')
-    #     file_path = self.joinpath(self.directory,"t.seg.nrrd")
-    #     # Save the segmentation node to file as nifti
-    #     self.file_path_nifti = str(self.nifti_files[self.current_index]).split(".")[0]+f"_mask_{datetime.now().strftime('%Y%m%d_%H%M%S')}.nii.gz"
-    #     self.seg_mask_status[self.current_index] = 3
-    #     # add to the list of segmentation files
-    #     self.segmentation_files[self.current_index] = self.file_path_nifti
-    #     # Save the segmentation node to file
-    #     slicer.util.saveNode(self.segmentation_node, file_path)
-    #     img = sitk.ReadImage(file_path)
-        
-    #     sitk.WriteImage(img, self.file_path_nifti)
-        
-    #     #delete the temporary file
-    #     try:
-    #         os.remove(file_path)
-    #     except:
-    #         pass
+    def _ensure_segmentation_node_exists(self):
+        """Create a segmentation node if one doesn't exist"""
+        if not self.segmentation_node or not slicer.mrmlScene.IsNodePresent(self.segmentation_node):
+            print(f"[DEBUG] Creating new segmentation node")
+            current_pair = self.image_pairs[self.current_index]
+            self.segmentation_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
+            self.segmentation_node.SetName(f"{current_pair['base_name']}_segmentation")
+            self.segmentation_node.CreateDefaultDisplayNodes()
+            
+            # Set reference geometry from DM volume (default)
+            dm_volume = self.volume_pairs[current_pair['base_name']]['DM']
+            self.segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(dm_volume)
+            
+            # Connect to segment editor
+            self.segmentEditorWidget.setSegmentationNode(self.segmentation_node)
+            self.segmentEditorWidget.setSourceVolumeNode(dm_volume)
+            
+            print(f"[DEBUG] Created segmentation node: {self.segmentation_node.GetName()}")
+        else:
+            print(f"[DEBUG] Segmentation node already exists: {self.segmentation_node.GetName()}")
 
     def overwrite_mask_clicked(self):
-        self.segmentation_node = slicer.mrmlScene.GetFirstNodeByClass('vtkMRMLSegmentationNode')
-        file_path = os.path.join(self.directory, "t.seg.nrrd")
+        """Save segmentation as numpy array (always 9 classes) and individual PNG files - separately for DM and CM"""
+
+        # Get the active segmentation from the segment editor
+        if self.segmentEditorWidget.segmentationNode():
+            self.segmentation_node = self.segmentEditorWidget.segmentationNode()
+            print(f"[DEBUG] Got segmentation from editor: {self.segmentation_node.GetName()}")
+        else:
+            print(f"[DEBUG] No segmentation in editor widget")
+        
+        # Check if we have a segmentation
+        if not self.segmentation_node:
+            print(f"[DEBUG] self.segmentation_node is None!")
+            slicer.util.warningDisplay("No segmentation to save! Please create at least one segment first.")
+            return
+        
+        # Check if segmentation has any segments
+        segmentation = self.segmentation_node.GetSegmentation()
+        num_segments = segmentation.GetNumberOfSegments()
+        segment_ids = [segmentation.GetNthSegmentID(i) for i in range(num_segments)]
+
+        for i in range(num_segments):
+            seg_id = segmentation.GetNthSegmentID(i)
+            segment = segmentation.GetSegment(seg_id)
+            seg_name = segment.GetName()
+            if not (seg_name.endswith('_DM') or seg_name.endswith('_CM')):
+                slicer.util.warningDisplay(
+                    f"Segment '{seg_name}' must end with '_DM' or '_CM'!\n\n"
+                    f"Please rename your segments according to the convention:\n"
+                    f"Artifact_Name_DM or Artifact_Name_CM\n\n"
+                    f"Example: 'Skin_Line_DM', 'Calcifications_CM'"
+                )
+                return
+        
+        print(f"[DEBUG] Number of segments in segmentation: {num_segments}")
+        
+        if num_segments == 0:
+            print(f"[DEBUG] Segmentation exists but has no segments!")
+            slicer.util.warningDisplay("No segments found! Please create at least one segment first.")
+            return
         
         current_pair = self.image_pairs[self.current_index]
         base_name = current_pair['base_name']
-        self.file_path_nifti = os.path.join(
-            self.directory, 
-            f"{base_name}_mask_{datetime.now().strftime('%Y%m%d_%H%M%S')}.nii.gz"
-        )
         
-        slicer.util.saveNode(self.segmentation_node, file_path)
-        img = sitk.ReadImage(file_path)
-        sitk.WriteImage(img, self.file_path_nifti)
+        # Determine artifact type based on current selections
+        dm_artifacts_present = self.ui.radioButton_dm_yes.isChecked()
+        cm_artifacts_present = self.ui.radioButton_cm_yes.isChecked()
         
-        try:
-            os.remove(file_path)
-        except:
-            pass
+        if not dm_artifacts_present and not cm_artifacts_present:
+            slicer.util.warningDisplay("No artifacts selected to save!")
+            return
+   
+        print(f"[DEBUG] Number of segments: {num_segments}")
+        for idx, seg_id in enumerate(segment_ids):
+            print(f"[DEBUG] Segment {idx}: ID={seg_id}")
+        
+        # CORRECT - checks name:
+        dm_segment_ids = []
+        cm_segment_ids = []
+        shared_segment_ids = []
+
+        for seg_id in segment_ids:
+            segment = segmentation.GetSegment(seg_id)
+            seg_name = segment.GetName()
+            if seg_name.endswith('_DM'):
+                dm_segment_ids.append(seg_id)
+            elif seg_name.endswith('_CM'):
+                cm_segment_ids.append(seg_id)
+            else:
+                shared_segment_ids.append(seg_id)
+        
+        print(f"[DEBUG] DM segments: {dm_segment_ids}")
+        print(f"[DEBUG] CM segments: {cm_segment_ids}")
+        print(f"[DEBUG] Shared segments: {shared_segment_ids}")
+        
+        # Map segment names to artifact class indices (0-8 for artifacts 1-9)
+        artifact_name_to_id = {
+            "Breast_in_Breast": 1,
+            "Skin_Line": 2,
+            "Ripple_Motion": 3,
+            "Blood_Vessels": 4,
+            "Calcifications": 5,
+            "Surgical_Clip": 6,
+            "Air_Trapping": 7,
+            "Contrast_Splatter": 8,
+            "Other": 9
+        }
+        
+        
+        # Helper function to save masks for a specific image type
+        
+        def save_masks_for_type(segment_ids_to_process, suffix, ref_volume):
+            if not segment_ids_to_process:
+                print(f"[DEBUG] No segments to process for suffix '{suffix}'")
+                return None
+            
+            # Get image dimensions from reference volume
+            dims = ref_volume.GetImageData().GetDimensions()
+            image_height, image_width = dims[1], dims[0]
+            
+            print(f"[DEBUG] Using reference volume dimensions for {suffix}: width={image_width}, height={image_height}")
+            
+            # Initialize combined mask array with 9 classes (width, height, 9)
+            combined_mask = np.zeros((image_width, image_height, 9), dtype=np.uint8)
+            
+            # Process each segment individually to preserve overlaps
+            for seg_id in segment_ids_to_process:
+                segment = segmentation.GetSegment(seg_id)
+                segment_name = segment.GetName()
+                
+                print(f"\n[DEBUG] Processing segment '{segment_name}'")
+                
+                # Extract the base artifact name
+                base_artifact_name = segment_name.replace("_DM", "").replace("_CM", "")
+                print(f"[DEBUG] Base artifact name: '{base_artifact_name}'")
+                
+                # Find which artifact class this segment belongs to
+                artifact_id = artifact_name_to_id.get(base_artifact_name)
+                print(f"[DEBUG] Artifact ID from mapping: {artifact_id}")
+                
+                if artifact_id is None:
+                    print(f"[DEBUG] WARNING: Artifact name '{base_artifact_name}' not found in mapping!")
+                    continue
+                
+                class_idx = artifact_id - 1  # Convert to 0-indexed
+                print(f"[DEBUG] Class index: {class_idx}")
+                
+                # Create a temporary segmentation with ONLY this segment
+                temp_seg_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
+                temp_seg_node.SetName(f"temp_seg_{segment_name}")
+                temp_seg_node.SetReferenceImageGeometryParameterFromVolumeNode(ref_volume)
+                
+                # Copy only this one segment
+                temp_seg_node.GetSegmentation().CopySegmentFromSegmentation(segmentation, seg_id)
+                
+                # Export THIS SINGLE segment to labelmap
+                temp_labelmap = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode")
+                temp_labelmap.SetName(f"temp_labelmap_{segment_name}")
+                
+                # Export single segment
+                slicer.modules.segmentations.logic().ExportAllSegmentsToLabelmapNode(
+                    temp_seg_node, temp_labelmap, slicer.vtkSegmentation.EXTENT_REFERENCE_GEOMETRY
+                )
+                
+                # Get the labelmap array
+                labelmap_array = slicer.util.arrayFromVolume(temp_labelmap)
+                
+                print(f"[DEBUG] Labelmap array shape: {labelmap_array.shape}")
+                print(f"[DEBUG] Labelmap unique values: {np.unique(labelmap_array)}")
+                
+                # Extract binary mask for this segment (any non-zero value = 1)
+                mask_slice = (labelmap_array[0, :, :] > 0).astype(np.uint8)
+                print(f"[DEBUG] Mask slice shape: {mask_slice.shape}, non-zero: {np.count_nonzero(mask_slice)}")
+                
+                # Transpose to match (width, height) orientation
+                mask_slice_transposed = mask_slice.T
+                print(f"[DEBUG] After transpose shape: {mask_slice_transposed.shape}, non-zero: {np.count_nonzero(mask_slice_transposed)}")
+                
+                # ADD to combined mask (use logical OR to preserve overlaps)
+                combined_mask[:, :, class_idx] = np.logical_or(
+                    combined_mask[:, :, class_idx], 
+                    mask_slice_transposed
+                ).astype(np.uint8)
+                print(f"[DEBUG] Stored in combined_mask[:, :, {class_idx}]")
+                
+                # Clean up temporary nodes
+                slicer.mrmlScene.RemoveNode(temp_labelmap)
+                slicer.mrmlScene.RemoveNode(temp_seg_node)
+            
+            # Debug: Check combined mask contents
+            print(f"\n[DEBUG] Combined mask summary for {suffix}:")
+            for class_idx in range(9):
+                non_zero = np.count_nonzero(combined_mask[:, :, class_idx])
+                print(f"[DEBUG] Class {class_idx} ({self._get_artifact_name(class_idx + 1)}): {non_zero} non-zero pixels")
+            
+            # Save combined .npy file
+            npy_filename = f"mask_{base_name}{suffix}.npy"
+            npy_path = os.path.join(self.directory, npy_filename)
+            np.save(npy_path, combined_mask)
+            logging.getLogger('CEMArtifacts').info(f"Saved combined mask: {npy_path}")
+            print(f"[DEBUG] Saved .npy file: {npy_path}")
+            
+            # Save individual PNG files for each artifact that has content
+            try:
+                from PIL import Image
+            except ImportError:
+                slicer.util.pip_install('pillow')
+                from PIL import Image
+            
+            print(f"\n[DEBUG] Attempting to save PNG files for {suffix}:")
+            for class_idx in range(9):
+                artifact_name = self._get_artifact_name(class_idx + 1)
+                has_content = combined_mask[:, :, class_idx].any()
+                print(f"[DEBUG] Class {class_idx} ({artifact_name}): has_content={has_content}")
+                
+                if has_content:
+                    png_filename = f"mask_{base_name}{suffix}_{artifact_name}.png"
+                    png_path = os.path.join(self.directory, png_filename)
+                    print(f"[DEBUG] Saving PNG: {png_filename}")
+                    
+                    # Convert to PIL Image and save (multiply by 255 for visibility)
+                    mask_data = combined_mask[:, :, class_idx] * 255
+                    print(f"[DEBUG] Mask data range: min={mask_data.min()}, max={mask_data.max()}")
+                    
+                    mask_img = Image.fromarray(mask_data.T.astype(np.uint8))  # Transpose back for image
+                    print(f"[DEBUG] PIL Image size: {mask_img.size}, mode: {mask_img.mode}")
+                    
+                    mask_img.save(png_path)
+                    print(f"[DEBUG] Successfully saved: {png_path}")
+                    logging.getLogger('CEMArtifacts').info(f"Saved individual mask: {png_filename}")
+            
+            return npy_path
+        # Save DM masks if DM artifacts present
+        saved_paths = []
+        if dm_artifacts_present and (dm_segment_ids or shared_segment_ids):
+            dm_ref_volume = self.volume_pairs[current_pair['base_name']]['DM']
+            segments_to_save = dm_segment_ids + shared_segment_ids
+            dm_path = save_masks_for_type(segments_to_save, "_DM", dm_ref_volume)
+            if dm_path:
+                saved_paths.append(os.path.basename(dm_path))
+                current_pair['masks']['DM'] = dm_path
+        
+        # Save CM masks if CM artifacts present
+        if cm_artifacts_present and (cm_segment_ids or shared_segment_ids):
+            cm_ref_volume = self.volume_pairs[current_pair['base_name']]['CM']
+            segments_to_save = cm_segment_ids + shared_segment_ids
+            cm_path = save_masks_for_type(segments_to_save, "_CM", cm_ref_volume)
+            if cm_path:
+                saved_paths.append(os.path.basename(cm_path))
+                current_pair['masks']['CM'] = cm_path
+        
+        
+        if saved_paths:
+            slicer.util.infoDisplay(f"Segmentation saved successfully:\n" + "\n".join(saved_paths) + "\nand individual PNG files")
+        else:
+            slicer.util.warningDisplay("No masks were saved. Please check segment names.")
 
 
-    
     def joinpath(self, rootdir, filename):
         return os.path.join(rootdir, filename)
         
@@ -386,7 +626,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
     def _is_valid_extension(self, path):
         # First check normal image extensions
-        valid_ext = [".nii", ".nii.gz", ".nrrd", ".jpg", ".jpeg", ".png", ".tif", ".tiff", ".dcm"]
+        valid_ext = [".nii", ".nii.gz", ".nrrd", ".jpg", ".jpeg", ".tif", ".tiff", ".dcm"]
         lower = path.lower()
 
         if any(lower.endswith(ext) for ext in valid_ext):
@@ -437,7 +677,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             key = f"P{pf['patient']}_{pf['laterality']}_{pf['view']}"
             if key not in pairs_dict:
                 pairs_dict[key] = {'base_name': key, 'patient': pf['patient'], 
-                                   'laterality': pf['laterality'], 'view': pf['view']}
+                                'laterality': pf['laterality'], 'view': pf['view']}
             
             pairs_dict[key][pf['image_type']] = pf['full_path']
         
@@ -445,12 +685,352 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         complete_pairs = []
         for key, pair_info in pairs_dict.items():
             if 'DM' in pair_info and 'CM' in pair_info:
+                # ADD MASK DETECTION HERE
+                pair_info['masks'] = self._find_masks_for_pair(pair_info)
                 complete_pairs.append(pair_info)
         
         # Sort by patient number, laterality, then view
         complete_pairs.sort(key=lambda x: (int(x['patient']), x['laterality'], x['view']))
         
         return complete_pairs
+
+    # ADD THESE NEW METHODS HERE:
+
+    def _find_masks_for_pair(self, pair_info):
+        """Find existing masks for a DM/CM pair - looking for .npy combined masks"""
+        base_name = pair_info['base_name']
+        directory = self.directory
+        
+        masks = {
+            'DM': None,
+            'CM': None,
+            'shared': None
+        }
+        
+        # Look for .npy masks: mask_P1_L_MLO_DM.npy, mask_P1_L_MLO_CM.npy
+        for suffix, key in [('_DM', 'DM'), ('_CM', 'CM'), ('', 'shared')]:
+            mask_path = os.path.join(directory, f"mask_{base_name}{suffix}.npy")
+            if os.path.exists(mask_path):
+                masks[key] = mask_path
+                logging.getLogger('CEMArtifacts').info(f'Found {key} mask: {mask_path}')
+        
+        return masks
+
+    def _get_artifact_name(self, artifact_id):
+        """Get artifact name from ID"""
+        mapping = {
+            1: "Breast_in_Breast",
+            2: "Skin_Line",
+            3: "Ripple_Motion",
+            4: "Blood_Vessels",
+            5: "Calcifications",
+            6: "Surgical_Clip",
+            7: "Air_Trapping",
+            8: "Contrast_Splatter",
+            9: "Other"
+        }
+        return mapping.get(artifact_id, f"Artifact_{artifact_id}")
+    
+    def _save_empty_mask(self, base_name, suffix):
+        """Save an empty mask (all zeros) for cases with no artifacts"""
+        current_pair = self.image_pairs[self.current_index]
+        
+        # Determine which volume to use as reference
+        if suffix == "_CM":
+            ref_volume = self.volume_pairs[base_name]['CM']
+        else:
+            ref_volume = self.volume_pairs[base_name]['DM']
+        
+        # Get image dimensions
+        dims = ref_volume.GetImageData().GetDimensions()
+        
+        # Create empty mask array (width, height, 9)
+        combined_mask = np.zeros((dims[0], dims[1], 9), dtype=np.uint8)
+        
+        # Save as .npy
+        npy_filename = f"mask_{base_name}{suffix}.npy"
+        npy_path = os.path.join(self.directory, npy_filename)
+        np.save(npy_path, combined_mask)
+        
+        logging.getLogger('CEMArtifacts').info(f"Saved empty mask: {npy_path}")
+        return npy_path
+
+
+    def create_segments_for_artifacts(self, artifact_type, dm_artifacts=None, cm_artifacts=None):
+        """Create segments with proper naming based on artifact selection"""
+        
+        if not self.segmentation_node:
+            self.segmentation_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
+            current_pair = self.image_pairs[self.current_index]
+            self.segmentation_node.SetName(f"{current_pair['base_name']}_segmentation")
+            # Ensure display node is created
+            self.segmentation_node.CreateDefaultDisplayNodes()
+        
+        # Clear existing segments
+        segmentation = self.segmentation_node.GetSegmentation()
+        segmentation.RemoveAllSegments()
+        
+        # Helper for naming
+        def add_segment(artifact_id, suffix=None):
+            base = self._get_artifact_name(artifact_id)
+            name = base if suffix is None else f"{base}_{suffix}"
+            segment_id = segmentation.AddEmptySegment(name)
+        
+            # Ensure display properties are initialized for this segment
+            if self.segmentation_node.GetDisplayNode():
+                display_node = self.segmentation_node.GetDisplayNode()
+                # Force creation of display properties for new segment
+                display_node.SetSegmentVisibility(segment_id, True)
+                display_node.SetSegmentOpacity(segment_id, 0.5)
+
+        # Similar on both images
+        if artifact_type == "similar":
+            for a in dm_artifacts or []:
+                add_segment(a)
+
+        # Only DM artifacts
+        elif artifact_type == "only_dm":
+            for a in dm_artifacts or []:
+                add_segment(a, "DM")
+
+        # Only CM artifacts
+        elif artifact_type == "only_cm":
+            for a in cm_artifacts or []:
+                add_segment(a, "CM")
+
+        # Both different
+        elif artifact_type == "both_different":
+            for a in dm_artifacts or []:
+                add_segment(a, "DM")
+            for a in cm_artifacts or []:
+                add_segment(a, "CM")
+
+        logging.getLogger('CEMArtifacts').info(f"Created segments for {artifact_type}")
+        return True
+
+
+    def load_existing_mask(self, mask_info, artifact_type):
+        """Load existing mask from .npy file (always 9 classes) and reconstruct segmentation"""
+        
+        # Determine which mask file to load based on what's available
+        mask_path = None
+        
+        # Priority: try to find the most relevant mask
+        if artifact_type == "similar":
+            mask_path = mask_info.get('shared') or mask_info.get('DM') or mask_info.get('CM')
+        elif artifact_type == "only_dm":
+            mask_path = mask_info.get('DM') or mask_info.get('shared')
+        elif artifact_type == "only_cm":
+            mask_path = mask_info.get('CM') or mask_info.get('shared')
+        elif artifact_type == "both_different":
+            # For both_different, we need both masks - don't load old masks
+            mask_path = None
+        
+        if not mask_path or not os.path.exists(mask_path) or not mask_path.endswith('.npy'):
+            return False
+        
+        try:
+            # Load numpy array (should be width, height, 9)
+            combined_mask = np.load(mask_path)
+            
+            # Check if mask is all zeros (no artifacts)
+            if not combined_mask.any():
+                logging.getLogger('CEMArtifacts').info(f"Mask is empty (no artifacts): {mask_path}")
+                return False
+            
+            # Remove old segmentation node if it exists
+            if self.segmentation_node and slicer.mrmlScene.IsNodePresent(self.segmentation_node):
+                slicer.mrmlScene.RemoveNode(self.segmentation_node)
+                self.segmentation_node = None
+
+            # Create new segmentation node
+            self.segmentation_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
+            current_pair = self.image_pairs[self.current_index]
+            self.segmentation_node.SetName(f"{current_pair['base_name']}_segmentation")
+
+            # Create display node BEFORE adding segments
+            self.segmentation_node.CreateDefaultDisplayNodes()
+            
+            # Get reference volume
+            if artifact_type in ["similar", "only_dm", "both_different"]:
+                ref_volume = self.volume_pairs[current_pair['base_name']]['DM']
+            else:
+                ref_volume = self.volume_pairs[current_pair['base_name']]['CM']
+            
+            # Set reference geometry
+            self.segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(ref_volume)
+            
+            # Get image dimensions
+            dims = ref_volume.GetImageData().GetDimensions()
+            
+            # Process each of the 9 artifact classes
+            for class_idx in range(9):
+                # Extract mask for this class (transpose back from width,height to match image orientation)
+                class_mask = combined_mask[:, :, class_idx].T
+                
+                # Skip if mask is empty for this class
+                if not class_mask.any():
+                    continue
+                
+                # Get artifact name for this class
+                artifact_name = self._get_artifact_name(class_idx + 1)
+                
+                # Determine segment name based on artifact type
+                if artifact_type == "only_dm":
+                    segment_name = f"{artifact_name}_DM"
+                elif artifact_type == "only_cm":
+                    segment_name = f"{artifact_name}_CM"
+                else:
+                    segment_name = artifact_name
+                
+                # Create temporary labelmap for this segment
+                temp_labelmap = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode")
+                temp_labelmap.SetAndObserveImageData(ref_volume.GetImageData())
+                
+                # Create array with correct dimensions [slices, rows, cols]
+                labelmap_array = np.zeros((1, dims[1], dims[0]), dtype=np.uint8)
+                labelmap_array[0, :, :] = class_mask
+                
+                # Update the labelmap
+                slicer.util.updateVolumeFromArray(temp_labelmap, labelmap_array)
+                temp_labelmap.SetOrigin(ref_volume.GetOrigin())
+                temp_labelmap.SetSpacing(ref_volume.GetSpacing())
+                # Copy the IJK to RAS matrix
+                mat = vtk.vtkMatrix4x4()
+                ref_volume.GetIJKToRASMatrix(mat)
+                temp_labelmap.SetIJKToRASMatrix(mat)
+                # Import to segmentation
+                slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(
+                    temp_labelmap, self.segmentation_node, [segment_name]
+                )
+
+                # Ensure display properties are set for imported segment
+                if self.segmentation_node.GetDisplayNode():
+                    display_node = self.segmentation_node.GetDisplayNode()
+                    # Get the actual segment ID that was created
+                    segmentation = self.segmentation_node.GetSegmentation()
+                    actual_segment_id = segmentation.GetSegmentIdBySegmentName(segment_name)
+                    if actual_segment_id:
+                        display_node.SetSegmentVisibility(actual_segment_id, True)
+                        display_node.SetSegmentOpacity(actual_segment_id, 0.5)
+
+                # Clean up
+                slicer.mrmlScene.RemoveNode(temp_labelmap)
+            
+            logging.getLogger('CEMArtifacts').info(f"Loaded existing mask from: {mask_path}")
+            return True
+            
+        except Exception as e:
+            logging.getLogger('CEMArtifacts').error(f"Failed to load mask from {mask_path}: {e}")
+            return False
+
+    def setup_segmentation_for_current_selection(self):
+        """Setup segmentation based on current artifact selections"""
+        
+        # Prevent re-entrance during loading
+        if self._is_loading:
+            return
+        
+        # Get artifact presence status
+        dm_artifacts_present = self.ui.radioButton_dm_yes.isChecked()
+        cm_artifacts_present = self.ui.radioButton_cm_yes.isChecked()
+        
+        if not dm_artifacts_present and not cm_artifacts_present:
+            # Hide segmentation editor if no artifacts
+            self.segmentEditorWidget.setVisible(False)
+            return
+        
+        # Collect selected artifacts
+        dm_artifacts = []
+        cm_artifacts = []
+        artifact_type = None
+        
+        if dm_artifacts_present:
+            for i in range(1, 10):
+                if getattr(self.ui, f"checkBox_dm_{i}").isChecked():
+                    dm_artifacts.append(i)
+        
+        if cm_artifacts_present:
+            for i in range(1, 10):
+                if getattr(self.ui, f"checkBox_cm_{i}").isChecked():
+                    cm_artifacts.append(i)
+        
+        # Determine artifact type
+        if dm_artifacts and cm_artifacts:
+            if set(dm_artifacts) == set(cm_artifacts):
+                artifact_type = "similar"
+            else:
+                artifact_type = "both_different"
+        elif dm_artifacts:
+            artifact_type = "only_dm"
+        elif cm_artifacts:
+            artifact_type = "only_cm"
+        else:
+            # Artifacts indicated but none selected yet - don't setup segmentation
+            return
+        
+        # **STORE CURRENT SLICE POSITIONS**
+        lm = slicer.app.layoutManager()
+        stored_positions = {}
+        for view_name in ["Red", "Yellow"]:
+            sw = lm.sliceWidget(view_name)
+            if sw:
+                slice_node = sw.sliceLogic().GetSliceNode()
+                stored_positions[view_name] = {
+                    'offset': slice_node.GetSliceOffset(),
+                    'fov': list(slice_node.GetFieldOfView())
+                }
+        
+        # Check for existing mask
+        current_pair = self.image_pairs[self.current_index]
+        mask_info = current_pair.get('masks', {})
+        
+        # Try to load existing mask
+        mask_loaded = False
+        if mask_info:
+            mask_loaded = self.load_existing_mask(mask_info, artifact_type)
+        
+        if not mask_loaded:
+            # Create new segments only if no mask was loaded
+            self.create_segments_for_artifacts(artifact_type, dm_artifacts, cm_artifacts)
+        
+        # Setup segment editor widget
+        if self.segmentation_node:
+            self.segmentEditorWidget.setSegmentationNode(self.segmentation_node)
+            
+            # Set source volume based on artifact type
+            target_volume = None
+            try:
+                if artifact_type in ["similar", "only_dm", "both_different"]:
+                    target_volume = self.volume_pairs[current_pair['base_name']]['DM']
+                elif artifact_type == "only_cm":
+                    target_volume = self.volume_pairs[current_pair['base_name']]['CM']
+                print(target_volume)
+                if target_volume:
+                    self.segmentEditorWidget.setSourceVolumeNode(target_volume)
+                    # CRITICAL: Set reference geometry based on primary volume
+                    # This ensures all segments use consistent coordinate system
+                    self.segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(target_volume)
+                
+                self.segmentEditorWidget.setVisible(True)
+            except KeyError as e:
+                logging.getLogger('CEMArtifacts').error(f"Volume not found: {e}")
+                return
+        
+        # **RESTORE SLICE POSITIONS**
+        qt.QTimer.singleShot(50, lambda: self._restore_slice_positions(stored_positions))
+
+    def _restore_slice_positions(self, stored_positions):
+        """Restore slice positions after segmentation updates"""
+        lm = slicer.app.layoutManager()
+        for view_name, position_info in stored_positions.items():
+            sw = lm.sliceWidget(view_name)
+            if sw:
+                slice_node = sw.sliceLogic().GetSliceNode()
+                slice_node.SetSliceOffset(position_info['offset'])
+                fov = position_info['fov']
+                slice_node.SetFieldOfView(fov[0], fov[1], fov[2])
+                sw.sliceLogic().SnapSliceOffsetToIJK()
     
 
 
@@ -540,6 +1120,8 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         #    # nothing changed
         #    return
         self.parameterSetNode = segmentEditorNode
+        self.parameterSetNode.SetOverwriteMode(slicer.vtkMRMLSegmentEditorNode.OverwriteNone)
+    
         self.segmentEditorWidget.setMRMLSegmentEditorNode(self.parameterSetNode)
    
     def onAtlasDirectoryChanged(self, directory):
@@ -768,7 +1350,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 
                 # Apply a slight zoom
                 fov = sn.GetFieldOfView()
-                sn.SetFieldOfView(fov[0]*0.88, fov[1]*0.88, fov[2])
+                sn.SetFieldOfView(fov[0]*1.0, fov[1]*1.0, fov[2])
         
         def poll():
             if views_ready():
@@ -845,14 +1427,24 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 dm_reader.SetFileName(dm_path)
                 dm_reader.Update()
                 
-                dm_volume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLVectorVolumeNode")
+                # Check number of components to determine volume type
+                num_components = dm_reader.GetOutput().GetNumberOfScalarComponents()
+                print(f"[DEBUG] DM image has {num_components} components")
+                
+                # Use ScalarVolume for grayscale (1 component) or Vector for RGB (3+ components)
+                if num_components == 1:
+                    dm_volume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
+                else:
+                    dm_volume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLVectorVolumeNode")
+                
                 dm_volume.SetName(f"{current_pair['base_name']}_DM")
                 dm_volume.SetAndObserveImageData(dm_reader.GetOutput())
                 dm_volume.SetSpacing(1, 1, 1)
-                print(f"[DEBUG] DM volume loaded: {dm_volume.GetName()}")
+                dm_volume.CreateDefaultDisplayNodes()  # Create display node
+                print(f"[DEBUG] DM volume loaded: {dm_volume.GetName()} ({num_components} components)")
             else:
                 raise Exception(f"Could not load DM image: {dm_path}")
-        
+
             # Load CM image
             print(f"[DEBUG] Loading CM image...")
             cm_reader = readerFactory.CreateImageReader2(cm_path)
@@ -860,25 +1452,24 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 cm_reader.SetFileName(cm_path)
                 cm_reader.Update()
                 
-                cm_volume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLVectorVolumeNode")
+                # Check number of components to determine volume type
+                num_components = cm_reader.GetOutput().GetNumberOfScalarComponents()
+                print(f"[DEBUG] CM image has {num_components} components")
+                
+                # Use ScalarVolume for grayscale (1 component) or Vector for RGB (3+ components)
+                if num_components == 1:
+                    cm_volume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLScalarVolumeNode")
+                else:
+                    cm_volume = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLVectorVolumeNode")
+                
                 cm_volume.SetName(f"{current_pair['base_name']}_CM")
                 cm_volume.SetAndObserveImageData(cm_reader.GetOutput())
                 cm_volume.SetSpacing(1, 1, 1)
-                print(f"[DEBUG] CM volume loaded: {cm_volume.GetName()}")
+                cm_volume.CreateDefaultDisplayNodes()  # Create display node
+                print(f"[DEBUG] CM volume loaded: {cm_volume.GetName()} ({num_components} components)")
             else:
                 raise Exception(f"Could not load CM image: {cm_path}")
-            # # ----- LOAD DM -----
-            # dm_reader = vtk.vtkJPEGReader()
-            # dm_reader.SetFileName(current_pair['DM']); dm_reader.Update()
-            # dm_volume = slicer.modules.volumes.logic().CreateVolume(dm_reader.GetOutput())
-            # dm_volume.SetName(f"{current_pair['base_name']}_DM")
-
-            # # ----- LOAD CM -----
-            # cm_reader = vtk.vtkJPEGReader()
-            # cm_reader.SetFileName(current_pair['CM']); cm_reader.Update()
-            # cm_volume = slicer.modules.volumes.logic().CreateVolume(cm_reader.GetOutput())
-            # cm_volume.SetName(f"{current_pair['base_name']}_CM")
-
+     
             # Store volume pair
             self.volume_pairs[current_pair['base_name']] = {
                 'DM': dm_volume,
@@ -926,286 +1517,155 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     def _artifacts_to_str(self, artifact_ids):
         mapping = {
             1: "Breast in Breast",
-            2: "Skin Illumination",
-            3: "Air Trapping",
-            4: "Ripple (Motion Artifact)",
-            5: "Contrast Splatter",
-            6: "Implant",
-            7: "Other"
+            2: "Skin Line/Thickening",
+            3: "Ripple (Motion)",
+            4: "Blood Vessels",
+            5: "Calcifications",
+            6: "Surgical Clip",
+            7: "Air Trapping",
+            8: "Contrast Splatter",
+            9: "Other"
         }
         return ", ".join([mapping[i] for i in artifact_ids])
     #DO these have to be ina ccordance iwht button from .ui? ie or is labels for csv files?
 # ______________________________________________________________________________________________________________________________________ ___________________________________________________________________ 
 
-    # def save_and_next_clicked(self):
-
-    #     # # Prevent re-entry (double clicks, UI event glitches)
-    #     # if self._is_loading:
-    #     #     return
-    #     # self._is_loading = True
-
-    #     try:
-            
-    #         # 1. Detect artifact state
-    #         artifact_present = None
-    #         if self.ui.radioButton_1.isChecked():  # Yes
-    #             artifact_present = True
-    #         elif self.ui.radioButton_2.isChecked():  # No
-    #             artifact_present = False
-
-    #         if artifact_present is None:
-    #             # slicer.util.errorDisplay("Please select Yes or No before continuing.")
-    #             return
-            
-    #         # 2. Build annotation string
-            
-    #         if not artifact_present:
-    #             annotation = "No artifact"
-    #             artifact_list = []
-    #         else:
-    #             artifact_list = []
-    #             for i in range(1, 8):
-    #                 checkbox = getattr(self.ui, f"checkBox_{i}")
-    #                 if checkbox.isChecked():
-    #                     artifact_list.append(i)
-
-    #             if not artifact_list:
-    #                 slicer.util.warningDisplay(
-    #                     "You selected 'Yes' but no artifact type — please choose at least one."
-    #                 )
-    #                 return
-
-    #             annotation = self._artifacts_to_str(artifact_list)
-
-            
-    #         # 3. Save comment
-    #         comment_text = self.ui.comment.toPlainText()
-    #         current_pair = self.image_pairs[self.current_index]
-    #         # self.likert_scores.append([self.current_index, annotation, comment_text])
-
-            
-    #         # 4. Append to CSV
-    #         # head, tail = os.path.split(self.nifti_files[self.current_index])
-    #         # data = {
-    #         #     'file': [self.nifti_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
-    #         #     'artifacts': [annotation],
-    #         #     'other': [comment_text],
-    #         #     'mask_path': [self.segmentation_files[self.current_index].replace(head, "").replace("/", "").replace("\\", "")],
-    #         #     'mask_status': [self._numerical_status_to_str(self.seg_mask_status[self.current_index])]
-    #         # }
-    #         data = {
-    #             'base_name': [current_pair['base_name']],
-    #             'artifacts': [annotation],
-    #             'other': [comment_text],
-    #             'mask_path': [""],
-    #             'mask_status': ["No mask"]
-    #         }
-
-    #         df = pd.DataFrame(data)
-    #         df.to_csv(self.joinpath(self.directory, "annotations.csv"),
-    #                 mode='a', index=False, header=False)
-
-            
-    #         # # 5. Store window/level + visibility state
-    #         # if self.volume_node and self.volume_node.GetDisplayNode():
-    #         #     self.store_current_window_level_settings()
-
-    #         # if self.segmentation_node:
-    #         #     self.store_segment_visiblity_states()
-
-            
-    #         # # 6. COMPUTE NEXT INDEX SAFELY
-    #         # if self.current_index >= self.n_files - 1:
-    #         #     print("All files checked")
-    #         #     self.finish_flag = True
-    #         #     return
-
-    #         # # Unique mode → skip already checked subjects -pa
-    #         # if self.unique_case_flag:
-    #         #     next_index = self.current_index + 1
-
-    #         #     while (
-    #         #         next_index < self.n_files
-    #         #         and self.id_subs[next_index] in self.id_subs_checked
-    #         #     ):
-    #         #         next_index += 1
-
-    #         #     if next_index >= self.n_files:
-    #         #         print("All files checked")
-    #         #         self.finish_flag = True
-    #         #         return
-
-    #         #     self.current_index = next_index
-
-    #         # # Normal mode
-    #         # else:
-    #         #     self.current_index += 1
-
-            
-    #         # 7. RESET UI BEFORE LOADING NEXT IMAGE
-    #         # reset artifacts
-    #         for i in range(1, 8):
-    #             getattr(self.ui, f"checkBox_{i}").setChecked(False)
-                
-    #         ## Reset Yes/No radio buttons safely
-    #         self.yesNoGroup.setExclusive(False)
-    #         self.ui.radioButton_1.setChecked(False)
-    #         self.ui.radioButton_2.setChecked(False)
-    #         self.ui.comment.clear()
-    #         slicer.app.processEvents()
-    #         self.yesNoGroup.setExclusive(True)
-    #         slicer.app.processEvents()
-            
-    #         print("idx & pairs:",self.current_index, self.n_pairs)
-    #         # Move to next pair
-    #         if self.current_index >= self.n_pairs - 1:
-                
-    #             print("All pairs checked")
-    #             return
-    #         else:
-    #             self.current_index += 1
-    #             self.load_image_pair()
-            
-    #         self.ui.status_checked.setText(
-    #             f"Checked: {self.current_index} / {self.n_pairs}"
-    #         )
-    #         # # 8. LOAD NEXT IMAGE EXACTLY ONCE
-    #         # if self.unique_case_flag:
-    #         #     self.load_image_file(unique=True)
-    #         # else:
-    #         #     self.load_image_file(unique=False)
-
-            
-
-    #     finally:
-    #         # Ensure unlock even if an exception happens
-    #         self._is_loading = False
-
-
     def save_and_next_clicked(self):
-        try:
-            # 1. Detect artifact state
-            artifact_present = None
-            if self.ui.radioButton_1.isChecked():
-                artifact_present = True
-            elif self.ui.radioButton_2.isChecked():
-                artifact_present = False
+        if self._is_loading:
+            return
+        
 
-            if artifact_present is None:
+
+        try:
+            # 1. Get artifact presence status
+            dm_artifacts_present = self.ui.radioButton_dm_yes.isChecked()
+            cm_artifacts_present = self.ui.radioButton_cm_yes.isChecked()
+            dm_no_artifacts = self.ui.radioButton_dm_no.isChecked()
+            cm_no_artifacts = self.ui.radioButton_cm_no.isChecked()
+            
+            # Check if user made selections
+            if not (dm_artifacts_present or dm_no_artifacts) or not (cm_artifacts_present or cm_no_artifacts):
+                # slicer.util.warningDisplay("Please indicate artifact presence for both DM and CM images.")
                 return
             
-            # 2. Build annotation strings for DM and CM
+            # 2. Build annotation strings
             dm_annotation = "No artifact"
             cm_annotation = "No artifact"
             artifact_type = "none"
             
-            if not artifact_present:
+
+            if not dm_artifacts_present and not cm_artifacts_present:
+                # Both have no artifacts
                 dm_annotation = "No artifact"
                 cm_annotation = "No artifact"
                 artifact_type = "none"
             else:
-                # Check if similar or different artifacts
-                similar_artifacts = self.ui.radioButton_similar_yes.isChecked()
-                different_artifacts = self.ui.radioButton_similar_no.isChecked()
-                
-                if not similar_artifacts and not different_artifacts:
-                    slicer.util.warningDisplay("Please specify if artifacts are similar or different between DM and CM.")
-                    return
-                
-                if similar_artifacts:
-                    # Use original checkboxes - same artifacts on both images
-                    artifact_list = []
-                    for i in range(1, 8):
-                        checkbox = getattr(self.ui, f"checkBox_{i}")
+                # Collect DM artifacts
+                dm_artifact_list = []
+                if dm_artifacts_present:
+                    for i in range(1, 10):
+                        checkbox = getattr(self.ui, f"checkBox_dm_{i}")
                         if checkbox.isChecked():
-                            artifact_list.append(i)
+                            dm_artifact_list.append(i)
                     
-                    if not artifact_list:
-                        slicer.util.warningDisplay("You selected 'Yes' but no artifact type – please choose at least one.")
+                    if not dm_artifact_list:
+                        slicer.util.warningDisplay("You indicated DM has artifacts but didn't select any types.")
                         return
                     
-                    annotation_str = self._artifacts_to_str(artifact_list)
-                    dm_annotation = annotation_str
-                    cm_annotation = annotation_str
-                    artifact_type = "similar"
+                    dm_annotation = self._artifacts_to_str(dm_artifact_list)
+                
+                # Collect CM artifacts
+                cm_artifact_list = []
+                if cm_artifacts_present:
+                    for i in range(1, 10):
+                        checkbox = getattr(self.ui, f"checkBox_cm_{i}")
+                        if checkbox.isChecked():
+                            cm_artifact_list.append(i)
                     
-                elif different_artifacts:
-                    # Check which image(s) have artifacts
-                    only_dm = self.ui.radioButton_only_dm.isChecked()
-                    only_cm = self.ui.radioButton_only_cm.isChecked()
-                    both_diff = self.ui.radioButton_both_diff.isChecked()
-                    
-                    if not (only_dm or only_cm or both_diff):
-                        slicer.util.warningDisplay("Please specify which image(s) contain artifacts.")
+                    if not cm_artifact_list:
+                        slicer.util.warningDisplay("You indicated CM has artifacts but didn't select any types.")
                         return
                     
-                    if only_dm:
-                        # Check DM checkboxes
-                        dm_artifact_list = []
-                        for i in range(1, 8):
-                            checkbox = getattr(self.ui, f"checkBox_dm_{i}")
-                            if checkbox.isChecked():
-                                dm_artifact_list.append(i)
-                        
-                        if not dm_artifact_list:
-                            slicer.util.warningDisplay("Please select at least one artifact type for DM.")
-                            return
-                        
-                        dm_annotation = self._artifacts_to_str(dm_artifact_list)
-                        cm_annotation = "No artifact"
-                        artifact_type = "only_dm"
-                        
-                    elif only_cm:
-                        # Check CM checkboxes
-                        cm_artifact_list = []
-                        for i in range(1, 8):
-                            checkbox = getattr(self.ui, f"checkBox_cm_{i}")
-                            if checkbox.isChecked():
-                                cm_artifact_list.append(i)
-                        
-                        if not cm_artifact_list:
-                            slicer.util.warningDisplay("Please select at least one artifact type for CM.")
-                            return
-                        
-                        dm_annotation = "No artifact"
-                        cm_annotation = self._artifacts_to_str(cm_artifact_list)
-                        artifact_type = "only_cm"
-                        
-                    elif both_diff:
-                        # Check both DM and CM checkboxes
-                        dm_artifact_list = []
-                        for i in range(1, 8):
-                            checkbox = getattr(self.ui, f"checkBox_dm_{i}")
-                            if checkbox.isChecked():
-                                dm_artifact_list.append(i)
-                        
-                        cm_artifact_list = []
-                        for i in range(1, 8):
-                            checkbox = getattr(self.ui, f"checkBox_cm_{i}")
-                            if checkbox.isChecked():
-                                cm_artifact_list.append(i)
-                        
-                        if not dm_artifact_list or not cm_artifact_list:
-                            slicer.util.warningDisplay("Please select at least one artifact type for both DM and CM.")
-                            return
-                        
-                        dm_annotation = self._artifacts_to_str(dm_artifact_list)
-                        cm_annotation = self._artifacts_to_str(cm_artifact_list)
+                    cm_annotation = self._artifacts_to_str(cm_artifact_list)
+                
+                # Determine artifact type
+                if dm_artifact_list and cm_artifact_list:
+                    if set(dm_artifact_list) == set(cm_artifact_list):
+                        artifact_type = "similar"
+                    else:
                         artifact_type = "both_different"
+                elif dm_artifact_list:
+                    artifact_type = "only_dm"
+                elif cm_artifact_list:
+                    artifact_type = "only_cm"
             
             # 3. Save comment
             comment_text = self.ui.comment.toPlainText()
             current_pair = self.image_pairs[self.current_index]
-            
-            # 4. Append to CSV with separate DM and CM columns
+            base_name = current_pair['base_name']
+            # 4. Determine mask path to save - ALWAYS save a mask
+            mask_path_str = ""
+            mask_status_str = "No mask"
+
+            if artifact_type == "none":
+                # Save empty mask for both DM and CM
+                dm_mask_path = self._save_empty_mask(base_name, "_DM")
+                cm_mask_path = self._save_empty_mask(base_name, "_CM")
+                mask_path_str = f"{os.path.basename(dm_mask_path)}, {os.path.basename(cm_mask_path)}"
+                mask_status_str = "Empty mask saved"
+            elif dm_artifacts_present or cm_artifacts_present:
+                current_pair = self.image_pairs[self.current_index]
+                base_name = current_pair['base_name']
+                
+                # For both_different, check for both DM and CM masks
+                if artifact_type == "both_different":
+                    dm_npy = f"mask_{base_name}_DM.npy"
+                    cm_npy = f"mask_{base_name}_CM.npy"
+                    dm_exists = os.path.exists(os.path.join(self.directory, dm_npy))
+                    cm_exists = os.path.exists(os.path.join(self.directory, cm_npy))
+                    
+                    if dm_exists and cm_exists:
+                        mask_path_str = f"{dm_npy}, {cm_npy}"
+                        mask_status_str = "Mask saved"
+                        current_pair['masks']['DM'] = os.path.join(self.directory, dm_npy)
+                        current_pair['masks']['CM'] = os.path.join(self.directory, cm_npy)
+                    else:
+                        mask_status_str = "No mask saved - please use 'Save Outline' button"
+                else:
+                    # For only_dm, only_cm, or similar
+                    if artifact_type == "only_dm":
+                        suffix = "_DM"
+                    elif artifact_type == "only_cm":
+                        suffix = "_CM"
+                    else:  # similar
+                        suffix = ""
+                    
+                    npy_filename = f"mask_{base_name}{suffix}.npy"
+                    npy_path = os.path.join(self.directory, npy_filename)
+                    
+                    if os.path.exists(npy_path):
+                        mask_path_str = npy_filename
+                        mask_status_str = "Mask saved"
+                        if 'masks' not in current_pair:
+                            current_pair['masks'] = {'DM': None, 'CM': None, 'shared': None}
+                        
+                        if suffix == "_DM":
+                            current_pair['masks']['DM'] = npy_path
+                        elif suffix == "_CM":
+                            current_pair['masks']['CM'] = npy_path
+                        else:
+                            current_pair['masks']['shared'] = npy_path
+                    else:
+                        mask_status_str = "No mask saved - please use 'Save Outline' button"
+            # Append to CSV
             data = {
                 'base_name': [current_pair['base_name']],
                 'artifact_type': [artifact_type],
                 'dm_artifacts': [dm_annotation],
                 'cm_artifacts': [cm_annotation],
                 'other': [comment_text],
-                'mask_path': [""],
-                'mask_status': ["No mask"]
+                'mask_path': [mask_path_str],
+                'mask_status': [mask_status_str]
             }
 
             df = pd.DataFrame(data)
@@ -1213,34 +1673,25 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                     mode='a', index=False, header=False)
             
             # 5. RESET UI BEFORE LOADING NEXT IMAGE
-            # Reset original artifact checkboxes
-            for i in range(1, 8):
-                getattr(self.ui, f"checkBox_{i}").setChecked(False)
-            
             # Reset DM artifact checkboxes
-            for i in range(1, 8):
+            for i in range(1, 10):
                 getattr(self.ui, f"checkBox_dm_{i}").setChecked(False)
             
             # Reset CM artifact checkboxes
-            for i in range(1, 8):
+            for i in range(1, 10):
                 getattr(self.ui, f"checkBox_cm_{i}").setChecked(False)
             
-            # Reset all radio button groups
-            self.yesNoGroup.setExclusive(False)
-            self.ui.radioButton_1.setChecked(False)
-            self.ui.radioButton_2.setChecked(False)
-            self.yesNoGroup.setExclusive(True)
+            # Reset DM presence radio buttons
+            self.dmPresentGroup.setExclusive(False)
+            self.ui.radioButton_dm_yes.setChecked(False)
+            self.ui.radioButton_dm_no.setChecked(False)
+            self.dmPresentGroup.setExclusive(True)
             
-            self.similarityGroup.setExclusive(False)
-            self.ui.radioButton_similar_yes.setChecked(False)
-            self.ui.radioButton_similar_no.setChecked(False)
-            self.similarityGroup.setExclusive(True)
-            
-            self.imageSelectionGroup.setExclusive(False)
-            self.ui.radioButton_only_dm.setChecked(False)
-            self.ui.radioButton_only_cm.setChecked(False)
-            self.ui.radioButton_both_diff.setChecked(False)
-            self.imageSelectionGroup.setExclusive(True)
+            # Reset CM presence radio buttons
+            self.cmPresentGroup.setExclusive(False)
+            self.ui.radioButton_cm_yes.setChecked(False)
+            self.ui.radioButton_cm_no.setChecked(False)
+            self.cmPresentGroup.setExclusive(True)
             
             self.ui.comment.clear()
             slicer.app.processEvents()
@@ -1264,6 +1715,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         finally:
             self._is_loading = False
+
 
     def store_current_window_level_settings(self):
         """Store current HU window and level settings."""
