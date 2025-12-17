@@ -98,7 +98,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.unique_case_flag=False
         self.finish_flag = False
         self._segmentation_update_timer = None  # Will be created in setup()
-
+        self.segmentation_queue = []  # Queue for sequential segmentation tasks
 
         self.pointListNode = None
         self.window_level = None   # To store current window/level settings
@@ -192,7 +192,11 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.cmPresentGroup.addButton(self.ui.radioButton_cm_no)
         self.cmPresentGroup.setExclusive(True)
 
-
+        # After the existing connections (around line 150)
+        self.ui.go_to_segmentations = qt.QPushButton("Go to Segmentations")
+        self.ui.go_to_segmentations.setVisible(False)
+        self.ui.inputsCollapsibleButton.layout().addWidget(self.ui.go_to_segmentations)
+        self.ui.go_to_segmentations.clicked.connect(self.startSegmentationWorkflow)
 
         # --- Both Save buttons trigger the same action ---
         self.ui.save_and_next.clicked.connect(self.save_and_next_clicked)
@@ -341,10 +345,11 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         
         # Show/hide the segmentation editor (only if any artifacts present)
         any_artifacts = dm_artifacts_present or cm_artifacts_present
-        self.segmentEditorWidget.setVisible(any_artifacts)
+        self.ui.go_to_segmentations.setVisible(any_artifacts)
         
-        # Show/hide the "Save Outline" button
-        self.ui.overwrite_mask.setVisible(any_artifacts)
+        # Hide the old segmentation editor and save button initially
+        self.segmentEditorWidget.setVisible(False)
+        self.ui.overwrite_mask.setVisible(False)
         
         # Setup segmentation when visibility changes
         # if any_artifacts:
@@ -377,82 +382,477 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         else:
             print(f"[DEBUG] Segmentation node already exists: {self.segmentation_node.GetName()}")
 
-    def overwrite_mask_clicked(self):
-        """Save segmentation as numpy array (always 9 classes) and individual PNG files - separately for DM and CM"""
 
-        # Get the active segmentation from the segment editor
-        if self.segmentEditorWidget.segmentationNode():
-            self.segmentation_node = self.segmentEditorWidget.segmentationNode()
-            print(f"[DEBUG] Got segmentation from editor: {self.segmentation_node.GetName()}")
-        else:
-            print(f"[DEBUG] No segmentation in editor widget")
-        
-        # Check if we have a segmentation
-        if not self.segmentation_node:
-            print(f"[DEBUG] self.segmentation_node is None!")
-            slicer.util.warningDisplay("No segmentation to save! Please create at least one segment first.")
-            return
-        
-        # Check if segmentation has any segments
-        segmentation = self.segmentation_node.GetSegmentation()
-        num_segments = segmentation.GetNumberOfSegments()
-        segment_ids = [segmentation.GetNthSegmentID(i) for i in range(num_segments)]
+    def startSegmentationWorkflow(self):
+        """Start the sequential segmentation workflow for DM and/or CM"""
+        self._segmentation_started = False
 
-        for i in range(num_segments):
-            seg_id = segmentation.GetNthSegmentID(i)
-            segment = segmentation.GetSegment(seg_id)
-            seg_name = segment.GetName()
-            if not (seg_name.endswith('_DM') or seg_name.endswith('_CM')):
-                slicer.util.warningDisplay(
-                    f"Segment '{seg_name}' must end with '_DM' or '_CM'!\n\n"
-                    f"Please rename your segments according to the convention:\n"
-                    f"Artifact_Name_DM or Artifact_Name_CM\n\n"
-                    f"Example: 'Skin_Line_DM', 'Calcifications_CM'"
-                )
-                return
-        
-        print(f"[DEBUG] Number of segments in segmentation: {num_segments}")
-        
-        if num_segments == 0:
-            print(f"[DEBUG] Segmentation exists but has no segments!")
-            slicer.util.warningDisplay("No segments found! Please create at least one segment first.")
-            return
         
         current_pair = self.image_pairs[self.current_index]
         base_name = current_pair['base_name']
         
-        # Determine artifact type based on current selections
+        # Collect which artifacts to segment
+        dm_artifacts_present = self.ui.radioButton_dm_yes.isChecked()
+        cm_artifacts_present = self.ui.radioButton_cm_yes.isChecked()
+        
+        dm_artifact_list = []
+        cm_artifact_list = []
+        
+        if dm_artifacts_present:
+            for i in range(1, 10):
+                if getattr(self.ui, f"checkBox_dm_{i}").isChecked():
+                    dm_artifact_list.append(i)
+        
+        if cm_artifacts_present:
+            for i in range(1, 10):
+                if getattr(self.ui, f"checkBox_cm_{i}").isChecked():
+                    cm_artifact_list.append(i)
+        
+        # Build segmentation queue
+        if dm_artifact_list:
+            self.segmentation_queue.append(('DM', dm_artifact_list))
+        if cm_artifact_list:
+            self.segmentation_queue.append(('CM', cm_artifact_list))
+        
+        # Hide main UI elements
+        self.ui.inputsCollapsibleButton.setVisible(False)
+        
+        # Start with first item in queue
+        self.processNextSegmentation()
+
+    def processNextSegmentation(self):
+        """Process the next segmentation task in the queue"""
+        # If we have a current segmentation, validate it first (except on first call)
+        if hasattr(self, '_segmentation_started') and self._segmentation_started:
+            if not self.validateCurrentSegmentation():
+                return  # Don't proceed if validation fails
+        
+        if not self.segmentation_queue:
+            # All done - restore UI
+            self.finalizeSegmentations()
+            return
+        
+        self._segmentation_started = True
+        
+        # Get next task
+        image_type, artifact_list = self.segmentation_queue.pop(0)
+        
+        # Launch single-view segmentation
+        self.launchSingleViewSegmentation(image_type, artifact_list)
+
+    # def launchSingleViewSegmentation(self, image_type, artifact_list):
+    #     """Launch segmentation editor for a single image (DM or CM)"""
+    #     current_pair = self.image_pairs[self.current_index]
+    #     base_name = current_pair['base_name']
+        
+    #     # Get the volume node
+    #     volume_node = self.volume_pairs[base_name][image_type]
+        
+    #     # Switch to single view layout
+    #     lm = slicer.app.layoutManager()
+    #     lm.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutOneUpRedSliceView)
+    #     slicer.util.setSliceViewerLayers(background=volume_node)
+        
+    #     # Create or get segmentation node
+    #     seg_name = f"{base_name}_{image_type}_segmentation"
+    #     self.segmentation_node = slicer.mrmlScene.GetFirstNodeByName(seg_name)
+    #     if not self.segmentation_node:
+    #         self.segmentation_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
+    #         self.segmentation_node.SetName(seg_name)
+    #         self.segmentation_node.CreateDefaultDisplayNodes()
+        
+    #     # Set reference geometry
+    #     self.segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(volume_node)
+        
+    #     # Create segments for each artifact
+    #     segmentation = self.segmentation_node.GetSegmentation()
+    #     segmentation.RemoveAllSegments()
+        
+    #     for artifact_id in artifact_list:
+    #         artifact_name = self._get_artifact_name(artifact_id)
+    #         segment_name = f"{artifact_name}_{image_type}"
+    #         segment_id = segmentation.AddEmptySegment(segment_name)
+            
+    #         # Set display properties
+    #         if self.segmentation_node.GetDisplayNode():
+    #             display_node = self.segmentation_node.GetDisplayNode()
+    #             display_node.SetSegmentVisibility(segment_id, True)
+    #             display_node.SetSegmentOpacity(segment_id, 0.5)
+        
+    #     # Setup segment editor
+    #     segmentEditorNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLSegmentEditorNode")
+    #     if not segmentEditorNode:
+    #         segmentEditorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentEditorNode")
+        
+    #     self.segmentEditorWidget.setMRMLSegmentEditorNode(segmentEditorNode)
+    #     self.segmentEditorWidget.setSegmentationNode(self.segmentation_node)
+    #     self.segmentEditorWidget.setSourceVolumeNode(volume_node)
+        
+    #     # Show editor and create continue button
+    #     self.segmentEditorWidget.setVisible(True)
+        
+    #     # Add instruction label if not exists
+    #     if not hasattr(self, 'segmentation_instruction'):
+    #         self.segmentation_instruction = qt.QLabel()
+    #         self.layout.addWidget(self.segmentation_instruction)
+        
+    #     self.segmentation_instruction.setText(
+    #         f"<b>Segmenting {image_type} Image</b><br>"
+    #         f"Please segment the following artifacts:<br>"
+    #         + "<br>".join([f"• {self._get_artifact_name(a)}" for a in artifact_list])
+    #     )
+    #     self.segmentation_instruction.setVisible(True)
+        
+    #     # Add continue button with proper connection handling
+    #     if not hasattr(self, 'continue_segmentation_btn'):
+    #         self.continue_segmentation_btn = qt.QPushButton("Continue to Next Image")
+    #         self.layout.addWidget(self.continue_segmentation_btn)
+    #         self.continue_segmentation_btn.clicked.connect(self.processNextSegmentation)
+    #     else:
+    #         # Disconnect old connection before reconnecting
+    #         try:
+    #             self.continue_segmentation_btn.clicked.disconnect()
+    #         except:
+    #             pass
+    #         self.continue_segmentation_btn.clicked.connect(self.processNextSegmentation)
+        
+        
+    #     self.continue_segmentation_btn.setVisible(True)
+    #     # Check if there are more items AFTER this one
+    #     remaining = len(self.segmentation_queue)
+    #     if remaining > 0:
+    #         next_type = self.segmentation_queue[0][0]  # Get next image type
+    #         self.continue_segmentation_btn.setText(f"Continue to {next_type} Image")
+    #     else:
+    #         self.continue_segmentation_btn.setText("Finish Segmentation")
+
+    def launchSingleViewSegmentation(self, image_type, artifact_list):
+        """Launch segmentation editor for a single image (DM or CM)"""
+        current_pair = self.image_pairs[self.current_index]
+        base_name = current_pair['base_name']
+        
+        # Get the volume node
+        volume_node = self.volume_pairs[base_name][image_type]
+        
+        # previous segmentation nodes hidden to avoid dm dcm confusion 
+        all_seg_nodes = slicer.util.getNodesByClass('vtkMRMLSegmentationNode')
+        for seg_node in all_seg_nodes:
+            if seg_node.GetDisplayNode():
+                seg_node.GetDisplayNode().SetVisibility(False)
+        
+        # Switch to single view layout
+        lm = slicer.app.layoutManager()
+        lm.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutOneUpRedSliceView)
+        slicer.util.setSliceViewerLayers(background=volume_node)
+        
+        # Create or get segmentation node
+        seg_name = f"{base_name}_{image_type}_segmentation"
+        self.segmentation_node = slicer.mrmlScene.GetFirstNodeByName(seg_name)
+        if not self.segmentation_node:
+            self.segmentation_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
+            self.segmentation_node.SetName(seg_name)
+            self.segmentation_node.CreateDefaultDisplayNodes()
+        
+        # Set reference geometry
+        self.segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(volume_node)
+        
+        # DM uses warm colors (reds, oranges, yellows)
+        # CM uses cool colors (blues, greens, purples)
+        if image_type == "DM":
+            color_palette = [
+                [1.0, 0.0, 0.0],      # Red
+                [1.0, 0.5, 0.0],      # Orange
+                [1.0, 1.0, 0.0],      # Yellow
+                [1.0, 0.0, 0.5],      # Pink
+                [0.8, 0.4, 0.0],      # Brown
+                [1.0, 0.6, 0.6],      # Light red
+                [1.0, 0.8, 0.4],      # Gold
+                [0.9, 0.3, 0.3],      # Dark red
+                [1.0, 0.7, 0.0],      # Amber
+            ]
+        else:  # CM
+            color_palette = [
+                [0.0, 0.0, 1.0],      # Blue
+                [0.0, 1.0, 0.0],      # Green
+                [0.5, 0.0, 1.0],      # Purple
+                [0.0, 1.0, 1.0],      # Cyan
+                [0.0, 0.5, 0.5],      # Teal
+                [0.4, 0.4, 1.0],      # Light blue
+                [0.0, 0.8, 0.4],      # Sea green
+                [0.6, 0.0, 0.8],      # Violet
+                [0.2, 0.8, 1.0],      # Sky blue
+            ]
+        
+        # Create segments for each artifact
+        segmentation = self.segmentation_node.GetSegmentation()
+        segmentation.RemoveAllSegments()
+        
+        for idx, artifact_id in enumerate(artifact_list):
+            artifact_name = self._get_artifact_name(artifact_id)
+            segment_name = f"{artifact_name}_{image_type}"
+            segment_id = segmentation.AddEmptySegment(segment_name)
+            
+            # **NEW: Assign color from palette**
+            segment = segmentation.GetSegment(segment_id)
+            color_idx = idx % len(color_palette)  # Wrap around if more than 9 artifacts
+            segment.SetColor(color_palette[color_idx])
+            
+            # Set display properties
+            if self.segmentation_node.GetDisplayNode():
+                display_node = self.segmentation_node.GetDisplayNode()
+                display_node.SetSegmentVisibility(segment_id, True)
+                display_node.SetSegmentOpacity(segment_id, 0.5)
+        
+        # **NEW: Make sure THIS segmentation is visible**
+        if self.segmentation_node.GetDisplayNode():
+            self.segmentation_node.GetDisplayNode().SetVisibility(True)
+        
+        # Setup segment editor
+        segmentEditorNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLSegmentEditorNode")
+        if not segmentEditorNode:
+            segmentEditorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentEditorNode")
+        
+        self.segmentEditorWidget.setMRMLSegmentEditorNode(segmentEditorNode)
+        self.segmentEditorWidget.setSegmentationNode(self.segmentation_node)
+        self.segmentEditorWidget.setSourceVolumeNode(volume_node)
+        
+        # Show editor and create continue button
+        self.segmentEditorWidget.setVisible(True)
+        
+        # Add instruction label if not exists
+        if not hasattr(self, 'segmentation_instruction'):
+            self.segmentation_instruction = qt.QLabel()
+            self.layout.addWidget(self.segmentation_instruction)
+        
+        self.segmentation_instruction.setText(
+            f"<b>Segmenting {image_type} Image</b><br>"
+            f"Please segment the following artifacts:<br>"
+            + "<br>".join([f"• {self._get_artifact_name(a)}" for a in artifact_list])
+        )
+        self.segmentation_instruction.setVisible(True)
+        
+        # Add continue button with proper connection handling
+        if not hasattr(self, 'continue_segmentation_btn'):
+            self.continue_segmentation_btn = qt.QPushButton("Continue to Next Image")
+            self.layout.addWidget(self.continue_segmentation_btn)
+            self.continue_segmentation_btn.clicked.connect(self.processNextSegmentation)
+        else:
+            # Disconnect old connection before reconnecting
+            try:
+                self.continue_segmentation_btn.clicked.disconnect()
+            except:
+                pass
+            self.continue_segmentation_btn.clicked.connect(self.processNextSegmentation)
+        
+        self.continue_segmentation_btn.setVisible(True)
+        # Check if there are more items AFTER this one
+        remaining = len(self.segmentation_queue)
+        if remaining > 0:
+            next_type = self.segmentation_queue[0][0]  # Get next image type
+            self.continue_segmentation_btn.setText(f"Continue to {next_type} Image")
+        else:
+            self.continue_segmentation_btn.setText("Finish Segmentation")
+
+
+    def validateCurrentSegmentation(self):
+        """Validate that user has created segments before continuing"""
+        if not self.segmentation_node:
+            qt.QMessageBox.warning(
+                slicer.util.mainWindow(),
+                "No Segmentation",
+                "Please create at least one segment before continuing."
+            )
+            return False
+        
+        segmentation = self.segmentation_node.GetSegmentation()
+        if segmentation.GetNumberOfSegments() == 0:
+            qt.QMessageBox.warning(
+                slicer.util.mainWindow(),
+                "No Segments",
+                "Please create at least one segment before continuing."
+            )
+            return False
+        
+        return True
+
+    def finalizeSegmentations(self):
+        """Clean up and restore UI after segmentation workflow"""
+        # Validate final segmentation before finishing
+        if not self.validateCurrentSegmentation():
+            return
+        
+        #  Automatically save the segmentations**
+        current_pair = self.image_pairs[self.current_index]
+        base_name = current_pair['base_name']
+        
+        dm_artifacts_present = self.ui.radioButton_dm_yes.isChecked()
+        cm_artifacts_present = self.ui.radioButton_cm_yes.isChecked()
+        
+        saved_paths = []
+        
+        # Process DM segmentation if exists
+        if dm_artifacts_present:
+            dm_seg_name = f"{base_name}_DM_segmentation"
+            dm_seg_node = slicer.mrmlScene.GetFirstNodeByName(dm_seg_name)
+            
+            if dm_seg_node:
+                dm_path = self._save_segmentation_node(dm_seg_node, base_name, "_DM", 
+                                                    self.volume_pairs[base_name]['DM'])
+                if dm_path:
+                    saved_paths.append(os.path.basename(dm_path))
+                    current_pair['masks']['DM'] = dm_path
+        
+        # Process CM segmentation if exists
+        if cm_artifacts_present:
+            cm_seg_name = f"{base_name}_CM_segmentation"
+            cm_seg_node = slicer.mrmlScene.GetFirstNodeByName(cm_seg_name)
+            
+            if cm_seg_node:
+                cm_path = self._save_segmentation_node(cm_seg_node, base_name, "_CM",
+                                                    self.volume_pairs[base_name]['CM'])
+                if cm_path:
+                    saved_paths.append(os.path.basename(cm_path))
+                    current_pair['masks']['CM'] = cm_path
+        
+        if saved_paths:
+            # Show brief confirmation
+            slicer.util.infoDisplay(
+                f"Segmentations saved successfully:\n" + "\n".join(saved_paths),
+                windowTitle="Success"
+            )
+        
+        # Reset workflow flag
+        self._segmentation_started = False
+        
+        # Hide segmentation UI elements
+        self.segmentEditorWidget.setVisible(False)
+        if hasattr(self, 'segmentation_instruction'):
+            self.segmentation_instruction.setVisible(False)
+        if hasattr(self, 'continue_segmentation_btn'):
+            self.continue_segmentation_btn.setVisible(False)
+        
+        # Restore side-by-side layout
+        dm_volume = self.volume_pairs[base_name]['DM']
+        cm_volume = self.volume_pairs[base_name]['CM']
+        self.setupSideBySideLayout(dm_volume, cm_volume)
+        
+        #reconfigure segmentation views after a short delay to ensure layout is ready? check timing
+        qt.QTimer.singleShot(50, lambda: self._configureSegmentationViews(base_name))
+    
+        # Restore main UI
+        self.ui.inputsCollapsibleButton.setVisible(True)
+        
+        # **CHANGED: Don't show the Save Outline button anymore**
+        # self.ui.overwrite_mask.setVisible(True)
+        self.ui.go_to_segmentations.setVisible(False)
+
+
+    def _configureSegmentationViews(self, base_name):
+        """Configure DM and CM segmentations to display on their respective views"""
+        lm = slicer.app.layoutManager()
+        
+        # Get view node IDs for the side-by-side layout
+        red_widget = lm.sliceWidget("Red")      # Left view (DM)
+        yellow_widget = lm.sliceWidget("Yellow")  # Right view (CM)
+        
+        if not red_widget or not yellow_widget:
+            print("[DEBUG] Views not ready yet")
+            return
+        
+        red_view_node = red_widget.mrmlSliceNode()
+        yellow_view_node = yellow_widget.mrmlSliceNode()
+        
+        # Configure DM segmentation (show only on Red/left view)
+        dm_seg_name = f"{base_name}_DM_segmentation"
+        dm_seg_node = slicer.mrmlScene.GetFirstNodeByName(dm_seg_name)
+        if dm_seg_node:
+            dm_display = dm_seg_node.GetDisplayNode()
+            if dm_display:
+                dm_display.SetVisibility(True)
+                dm_display.RemoveAllViewNodeIDs()
+                dm_display.AddViewNodeID(red_view_node.GetID())
+                print(f"[DEBUG] Configured {dm_seg_name} to show on Red view")
+        
+        # Configure CM segmentation (show only on Yellow/right view)
+        cm_seg_name = f"{base_name}_CM_segmentation"
+        cm_seg_node = slicer.mrmlScene.GetFirstNodeByName(cm_seg_name)
+        if cm_seg_node:
+            cm_display = cm_seg_node.GetDisplayNode()
+            if cm_display:
+                cm_display.SetVisibility(True)
+                cm_display.RemoveAllViewNodeIDs()
+                cm_display.AddViewNodeID(yellow_view_node.GetID())
+                print(f"[DEBUG] Configured {cm_seg_name} to show on Yellow view")
+
+    def overwrite_mask_clicked(self):
+        """Save segmentation as numpy array (always 9 classes) and individual PNG files - separately for DM and CM"""
+        
+        current_pair = self.image_pairs[self.current_index]
+        base_name = current_pair['base_name']
+        
+        # Get artifact presence status
         dm_artifacts_present = self.ui.radioButton_dm_yes.isChecked()
         cm_artifacts_present = self.ui.radioButton_cm_yes.isChecked()
         
         if not dm_artifacts_present and not cm_artifacts_present:
             slicer.util.warningDisplay("No artifacts selected to save!")
             return
-   
-        print(f"[DEBUG] Number of segments: {num_segments}")
-        for idx, seg_id in enumerate(segment_ids):
-            print(f"[DEBUG] Segment {idx}: ID={seg_id}")
         
-        # CORRECT - checks name:
-        dm_segment_ids = []
-        cm_segment_ids = []
-        shared_segment_ids = []
-
-        for seg_id in segment_ids:
-            segment = segmentation.GetSegment(seg_id)
-            seg_name = segment.GetName()
-            if seg_name.endswith('_DM'):
-                dm_segment_ids.append(seg_id)
-            elif seg_name.endswith('_CM'):
-                cm_segment_ids.append(seg_id)
+        saved_paths = []
+        
+        # Process DM segmentation if exists
+        if dm_artifacts_present:
+            dm_seg_name = f"{base_name}_DM_segmentation"
+            dm_seg_node = slicer.mrmlScene.GetFirstNodeByName(dm_seg_name)
+            
+            if dm_seg_node:
+                dm_path = self._save_segmentation_node(dm_seg_node, base_name, "_DM", 
+                                                    self.volume_pairs[base_name]['DM'])
+                if dm_path:
+                    saved_paths.append(os.path.basename(dm_path))
+                    current_pair['masks']['DM'] = dm_path
             else:
-                shared_segment_ids.append(seg_id)
+                slicer.util.warningDisplay(f"DM segmentation not found: {dm_seg_name}")
+                return
         
-        print(f"[DEBUG] DM segments: {dm_segment_ids}")
-        print(f"[DEBUG] CM segments: {cm_segment_ids}")
-        print(f"[DEBUG] Shared segments: {shared_segment_ids}")
+        # Process CM segmentation if exists
+        if cm_artifacts_present:
+            cm_seg_name = f"{base_name}_CM_segmentation"
+            cm_seg_node = slicer.mrmlScene.GetFirstNodeByName(cm_seg_name)
+            
+            if cm_seg_node:
+                cm_path = self._save_segmentation_node(cm_seg_node, base_name, "_CM",
+                                                    self.volume_pairs[base_name]['CM'])
+                if cm_path:
+                    saved_paths.append(os.path.basename(cm_path))
+                    current_pair['masks']['CM'] = cm_path
+            else:
+                slicer.util.warningDisplay(f"CM segmentation not found: {cm_seg_name}")
+                return
         
-        # Map segment names to artifact class indices (0-8 for artifacts 1-9)
+        if saved_paths:
+            slicer.util.infoDisplay(f"Segmentation saved successfully:\n" + "\n".join(saved_paths) + "\nand individual PNG files")
+        else:
+            slicer.util.warningDisplay("No masks were saved.")
+
+    def _save_segmentation_node(self, seg_node, base_name, suffix, ref_volume):
+        """Save a single segmentation node to .npy and PNG files"""
+        segmentation = seg_node.GetSegmentation()
+        num_segments = segmentation.GetNumberOfSegments()
+        
+        if num_segments == 0:
+            print(f"[DEBUG] No segments in {seg_node.GetName()}")
+            return None
+        
+        segment_ids = [segmentation.GetNthSegmentID(i) for i in range(num_segments)]
+        
+        # Get image dimensions from reference volume
+        dims = ref_volume.GetImageData().GetDimensions()
+        image_height, image_width = dims[1], dims[0]
+        
+        # Initialize combined mask array
+        combined_mask = np.zeros((image_width, image_height, 9), dtype=np.uint8)
+        
         artifact_name_to_id = {
             "Breast_in_Breast": 1,
             "Skin_Line": 2,
@@ -465,161 +865,72 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             "Other": 9
         }
         
+        # Process each segment
+        for seg_id in segment_ids:
+            segment = segmentation.GetSegment(seg_id)
+            segment_name = segment.GetName()
+            
+            # Extract base artifact name (remove _DM or _CM suffix)
+            base_artifact_name = segment_name.replace("_DM", "").replace("_CM", "")
+            
+            artifact_id = artifact_name_to_id.get(base_artifact_name)
+            if artifact_id is None:
+                print(f"[DEBUG] WARNING: Artifact name '{base_artifact_name}' not found in mapping!")
+                continue
+            
+            class_idx = artifact_id - 1
+            
+            # Create temporary segmentation with ONLY this segment
+            temp_seg_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
+            temp_seg_node.SetReferenceImageGeometryParameterFromVolumeNode(ref_volume)
+            temp_seg_node.GetSegmentation().CopySegmentFromSegmentation(segmentation, seg_id)
+            
+            # Export to labelmap
+            temp_labelmap = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode")
+            slicer.modules.segmentations.logic().ExportAllSegmentsToLabelmapNode(
+                temp_seg_node, temp_labelmap, slicer.vtkSegmentation.EXTENT_REFERENCE_GEOMETRY
+            )
+            
+            # Get array and add to combined mask
+            labelmap_array = slicer.util.arrayFromVolume(temp_labelmap)
+            mask_slice = (labelmap_array[0, :, :] > 0).astype(np.uint8)
+            mask_slice_transposed = mask_slice.T
+            
+            combined_mask[:, :, class_idx] = np.logical_or(
+                combined_mask[:, :, class_idx], 
+                mask_slice_transposed
+            ).astype(np.uint8)
+            
+            # Cleanup
+            slicer.mrmlScene.RemoveNode(temp_labelmap)
+            slicer.mrmlScene.RemoveNode(temp_seg_node)
         
-        # Helper function to save masks for a specific image type
+        # Save .npy file
+        npy_filename = f"mask_{base_name}{suffix}.npy"
+        npy_path = os.path.join(self.directory, npy_filename)
+        combined_mask_rotated = np.rot90(combined_mask, k=1, axes=(0, 1))
+        np.save(npy_path, combined_mask_rotated)
         
-        def save_masks_for_type(segment_ids_to_process, suffix, ref_volume):
-            if not segment_ids_to_process:
-                print(f"[DEBUG] No segments to process for suffix '{suffix}'")
-                return None
-            
-            # Get image dimensions from reference volume
-            dims = ref_volume.GetImageData().GetDimensions()
-            image_height, image_width = dims[1], dims[0]
-            
-            print(f"[DEBUG] Using reference volume dimensions for {suffix}: width={image_width}, height={image_height}")
-            
-            # Initialize combined mask array with 9 classes (width, height, 9)
-            combined_mask = np.zeros((image_width, image_height, 9), dtype=np.uint8)
-            
-            # Process each segment individually to preserve overlaps
-            for seg_id in segment_ids_to_process:
-                segment = segmentation.GetSegment(seg_id)
-                segment_name = segment.GetName()
-                
-                print(f"\n[DEBUG] Processing segment '{segment_name}'")
-                
-                # Extract the base artifact name
-                base_artifact_name = segment_name.replace("_DM", "").replace("_CM", "")
-                print(f"[DEBUG] Base artifact name: '{base_artifact_name}'")
-                
-                # Find which artifact class this segment belongs to
-                artifact_id = artifact_name_to_id.get(base_artifact_name)
-                print(f"[DEBUG] Artifact ID from mapping: {artifact_id}")
-                
-                if artifact_id is None:
-                    print(f"[DEBUG] WARNING: Artifact name '{base_artifact_name}' not found in mapping!")
-                    continue
-                
-                class_idx = artifact_id - 1  # Convert to 0-indexed
-                print(f"[DEBUG] Class index: {class_idx}")
-                
-                # Create a temporary segmentation with ONLY this segment
-                temp_seg_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
-                temp_seg_node.SetName(f"temp_seg_{segment_name}")
-                temp_seg_node.SetReferenceImageGeometryParameterFromVolumeNode(ref_volume)
-                
-                # Copy only this one segment
-                temp_seg_node.GetSegmentation().CopySegmentFromSegmentation(segmentation, seg_id)
-                
-                # Export THIS SINGLE segment to labelmap
-                temp_labelmap = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode")
-                temp_labelmap.SetName(f"temp_labelmap_{segment_name}")
-                
-                # Export single segment
-                slicer.modules.segmentations.logic().ExportAllSegmentsToLabelmapNode(
-                    temp_seg_node, temp_labelmap, slicer.vtkSegmentation.EXTENT_REFERENCE_GEOMETRY
-                )
-                
-                # Get the labelmap array
-                labelmap_array = slicer.util.arrayFromVolume(temp_labelmap)
-                
-                print(f"[DEBUG] Labelmap array shape: {labelmap_array.shape}")
-                print(f"[DEBUG] Labelmap unique values: {np.unique(labelmap_array)}")
-                
-                # Extract binary mask for this segment (any non-zero value = 1)
-                mask_slice = (labelmap_array[0, :, :] > 0).astype(np.uint8)
-                print(f"[DEBUG] Mask slice shape: {mask_slice.shape}, non-zero: {np.count_nonzero(mask_slice)}")
-                
-                # Transpose to match (width, height) orientation
-                mask_slice_transposed = mask_slice.T
-                print(f"[DEBUG] After transpose shape: {mask_slice_transposed.shape}, non-zero: {np.count_nonzero(mask_slice_transposed)}")
-                
-                # ADD to combined mask (use logical OR to preserve overlaps)
-                combined_mask[:, :, class_idx] = np.logical_or(
-                    combined_mask[:, :, class_idx], 
-                    mask_slice_transposed
-                ).astype(np.uint8)
-                print(f"[DEBUG] Stored in combined_mask[:, :, {class_idx}]")
-                
-                # Clean up temporary nodes
-                slicer.mrmlScene.RemoveNode(temp_labelmap)
-                slicer.mrmlScene.RemoveNode(temp_seg_node)
-            
-            # Debug: Check combined mask contents
-            print(f"\n[DEBUG] Combined mask summary for {suffix}:")
-            for class_idx in range(9):
-                non_zero = np.count_nonzero(combined_mask[:, :, class_idx])
-                print(f"[DEBUG] Class {class_idx} ({self._get_artifact_name(class_idx + 1)}): {non_zero} non-zero pixels")
-            
-            # Save combined .npy file
-            npy_filename = f"mask_{base_name}{suffix}.npy"
-            npy_path = os.path.join(self.directory, npy_filename)
-            # Rotate 90 degrees counterclockwise for each channel
-            combined_mask_rotated = np.rot90(combined_mask, k=1, axes=(0, 1))
-            np.save(npy_path, combined_mask_rotated)
-            logging.getLogger('CEMArtifacts').info(f"Saved combined mask: {npy_path}")
-            print(f"[DEBUG] Saved .npy file (rot90): {npy_path}")
-            
-            # Save individual PNG files for each artifact that has content
-            try:
-                from PIL import Image
-            except ImportError:
-                slicer.util.pip_install('pillow')
-                from PIL import Image
-            
-            print(f"\n[DEBUG] Attempting to save PNG files for {suffix}:")
-            for class_idx in range(9):
+        # Save individual PNG files
+        try:
+            from PIL import Image
+        except ImportError:
+            slicer.util.pip_install('pillow')
+            from PIL import Image
+        
+        for class_idx in range(9):
+            if combined_mask[:, :, class_idx].any():
                 artifact_name = self._get_artifact_name(class_idx + 1)
-                has_content = combined_mask[:, :, class_idx].any()
-                print(f"[DEBUG] Class {class_idx} ({artifact_name}): has_content={has_content}")
+                png_filename = f"mask_{base_name}{suffix}_{artifact_name}.png"
+                png_path = os.path.join(self.directory, png_filename)
                 
-                if has_content:
-                    png_filename = f"mask_{base_name}{suffix}_{artifact_name}.png"
-                    png_path = os.path.join(self.directory, png_filename)
-                    print(f"[DEBUG] Saving PNG: {png_filename}")
-                    
-                    # Convert to PIL Image and save (multiply by 255 for visibility)
-                    mask_data = combined_mask[:, :, class_idx] * 255
-                    print(f"[DEBUG] Mask data range: min={mask_data.min()}, max={mask_data.max()}")
-                    
-                    # Transpose and flip vertically
-                    mask_data_transposed = mask_data.T
-                    mask_data_flipped = np.flipud(mask_data_transposed)
-                    
-                    mask_img = Image.fromarray(mask_data_flipped.astype(np.uint8))
-                    print(f"[DEBUG] PIL Image size: {mask_img.size}, mode: {mask_img.mode}")
-                    
-                    mask_img.save(png_path)
-                    print(f"[DEBUG] Successfully saved (flipped): {png_path}")
-                    logging.getLogger('CEMArtifacts').info(f"Saved individual mask: {png_filename}")
-            
-            return npy_path
-        # Save DM masks if DM artifacts present
-        saved_paths = []
-        if dm_artifacts_present and (dm_segment_ids or shared_segment_ids):
-            dm_ref_volume = self.volume_pairs[current_pair['base_name']]['DM']
-            segments_to_save = dm_segment_ids + shared_segment_ids
-            dm_path = save_masks_for_type(segments_to_save, "_DM", dm_ref_volume)
-            if dm_path:
-                saved_paths.append(os.path.basename(dm_path))
-                current_pair['masks']['DM'] = dm_path
+                mask_data = combined_mask[:, :, class_idx] * 255
+                mask_data_flipped = np.flipud(mask_data.T)
+                mask_img = Image.fromarray(mask_data_flipped.astype(np.uint8))
+                mask_img.save(png_path)
         
-        # Save CM masks if CM artifacts present
-        if cm_artifacts_present and (cm_segment_ids or shared_segment_ids):
-            cm_ref_volume = self.volume_pairs[current_pair['base_name']]['CM']
-            segments_to_save = cm_segment_ids + shared_segment_ids
-            cm_path = save_masks_for_type(segments_to_save, "_CM", cm_ref_volume)
-            if cm_path:
-                saved_paths.append(os.path.basename(cm_path))
-                current_pair['masks']['CM'] = cm_path
-        
-        
-        if saved_paths:
-            slicer.util.infoDisplay(f"Segmentation saved successfully:\n" + "\n".join(saved_paths) + "\nand individual PNG files")
-        else:
-            slicer.util.warningDisplay("No masks were saved. Please check segment names.")
-
+        logging.getLogger('CEMArtifacts').info(f"Saved: {npy_path}")
+        return npy_path
 
     def joinpath(self, rootdir, filename):
         return os.path.join(rootdir, filename)
@@ -1410,10 +1721,14 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 self.volume_pairs = {}
 
 
-                if self.segmentation_node and slicer.mrmlScene.IsNodePresent(self.segmentation_node):
-                    slicer.mrmlScene.RemoveNode(self.segmentation_node)
-                self.segmentation_node = None
+                # Remove ALL segmentation nodes, not just self.segmentation_node
+                # This handles the case where both DM and CM segmentations exist
+                segmentation_nodes = slicer.util.getNodesByClass('vtkMRMLSegmentationNode')
+                for seg_node in segmentation_nodes:
+                    if seg_node and slicer.mrmlScene.IsNodePresent(seg_node):
+                        slicer.mrmlScene.RemoveNode(seg_node)
                 
+                self.segmentation_node = None
                 slicer.app.processEvents()
             except Exception as e:
                 logger.error(f"Cleanup error: {e}")
