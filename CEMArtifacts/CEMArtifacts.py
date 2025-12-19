@@ -133,6 +133,10 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         parametersFormLayout = qt.QFormLayout(parametersCollapsibleButton)
         self.atlasDirectoryButton = ctk.ctkDirectoryButton() #lets you select path for pictures
         parametersFormLayout.addRow("Directory: ", self.atlasDirectoryButton) #Buttons for input path
+
+        self.reviewModeCheckbox = qt.QCheckBox("Review Mode (load completed annotations)")
+        self.reviewModeCheckbox.setToolTip("Check this to review and edit previously annotated cases")
+        parametersFormLayout.addRow("", self.reviewModeCheckbox)
         
         # Set scene in MRML widgets. Make sure that in Qt designer the top-level qMRMLWidget's
         # "mrmlSceneChanged(vtkMRMLScene*)" signal in is connected to each MRML widget's.
@@ -174,6 +178,8 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # add a paint brush from segment editor window
         # Create a new segment editor widget and add it to the NiftyViewerWidget
         self._createSegmentEditorWidget_()
+
+        self.reviewModeCheckbox.toggled.connect(self.onReviewModeToggled)
         
         # Connect new radio button groups
         self.ui.radioButton_dm_yes.toggled.connect(self.updateCheckboxVisibility)
@@ -198,16 +204,25 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.inputsCollapsibleButton.layout().addWidget(self.ui.go_to_segmentations)
         self.ui.go_to_segmentations.clicked.connect(self.startSegmentationWorkflow)
 
+        try:
+            self.ui.save_and_next.clicked.disconnect()
+        except:
+            pass
+        try:
+            self.ui.quick_save_and_next.clicked.disconnect()
+        except:
+            pass
+
         # --- Both Save buttons trigger the same action ---
         self.ui.save_and_next.clicked.connect(self.save_and_next_clicked)
         self.ui.quick_save_and_next.clicked.connect(self.save_and_next_clicked)
 
-        # --- Keyboard shortcut for both (Ctrl/Command + Return) ---
-        save_shortcut = qt.QShortcut(qt.QKeySequence("Ctrl+Return"), self.parent)
-        save_shortcut.activated.connect(self.save_and_next_clicked)
-        # macOS command key version
-        save_shortcut_mac = qt.QShortcut(qt.QKeySequence("Meta+Return"), self.parent)
-        save_shortcut_mac.activated.connect(self.save_and_next_clicked)
+        if not hasattr(self, '_save_shortcuts'):
+            save_shortcut = qt.QShortcut(qt.QKeySequence("Ctrl+Return"), self.parent)
+            save_shortcut.activated.connect(self.save_and_next_clicked)
+            save_shortcut_mac = qt.QShortcut(qt.QKeySequence("Meta+Return"), self.parent)
+            save_shortcut_mac.activated.connect(self.save_and_next_clicked)
+            self._save_shortcuts = (save_shortcut, save_shortcut_mac)
 
         # Connect artifact checkboxes with debouncing to avoid rapid re-triggering
         # self._segmentation_update_timer = qt.QTimer()
@@ -233,6 +248,12 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Make sure parameter node is initialized (needed for module reload)
         #self.initializeParameterNode()
 
+
+    def onReviewModeToggled(self, checked):
+        """Reload images when review mode is toggled"""
+        if self.directory:
+            # Re-trigger directory loading with new review mode state
+            self.onAtlasDirectoryChanged(self.directory)
 
     def _createSegmentEditorWidget_(self): #this parts creates the segmentation bubblw and corresponding features
         """Create and initialize a customize Slicer Editor which contains just some the tools that we need for the segmentation"""
@@ -525,6 +546,80 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     #         self.continue_segmentation_btn.setText(f"Continue to {next_type} Image")
     #     else:
     #         self.continue_segmentation_btn.setText("Finish Segmentation")
+
+    def _load_npy_mask_to_segmentation(self, mask_path, base_name, suffix, ref_volume):
+        """Load a .npy mask file and reconstruct segmentation node"""
+        if not os.path.exists(mask_path):
+            print(f"[DEBUG] Mask not found: {mask_path}")
+            return None
+        
+        try:
+            # Load numpy array (width, height, 9)
+            combined_mask = np.load(mask_path)
+            
+            # Check if mask is all zeros
+            if not combined_mask.any():
+                print(f"[DEBUG] Mask is empty: {mask_path}")
+                return None
+            
+            # Create segmentation node
+            seg_name = f"{base_name}{suffix}_segmentation"
+            seg_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
+            seg_node.SetName(seg_name)
+            seg_node.CreateDefaultDisplayNodes()
+            
+            # Set reference geometry
+            seg_node.SetReferenceImageGeometryParameterFromVolumeNode(ref_volume)
+            
+            # Get image dimensions
+            dims = ref_volume.GetImageData().GetDimensions()
+            
+            # Process each of the 9 artifact classes
+            for class_idx in range(9):
+                class_mask = combined_mask[:, :, class_idx].T
+                
+                if not class_mask.any():
+                    continue
+                
+                artifact_name = self._get_artifact_name(class_idx + 1)
+                segment_name = f"{artifact_name}{suffix}"
+                
+                # Create temporary labelmap
+                temp_labelmap = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode")
+                temp_labelmap.SetAndObserveImageData(ref_volume.GetImageData())
+                
+                labelmap_array = np.zeros((1, dims[1], dims[0]), dtype=np.uint8)
+                labelmap_array[0, :, :] = class_mask
+                
+                slicer.util.updateVolumeFromArray(temp_labelmap, labelmap_array)
+                temp_labelmap.SetOrigin(ref_volume.GetOrigin())
+                temp_labelmap.SetSpacing(ref_volume.GetSpacing())
+                
+                mat = vtk.vtkMatrix4x4()
+                ref_volume.GetIJKToRASMatrix(mat)
+                temp_labelmap.SetIJKToRASMatrix(mat)
+                
+                slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(
+                    temp_labelmap, seg_node, [segment_name]
+                )
+                
+                # Set display properties
+                if seg_node.GetDisplayNode():
+                    display_node = seg_node.GetDisplayNode()
+                    segmentation = seg_node.GetSegmentation()
+                    actual_segment_id = segmentation.GetSegmentIdBySegmentName(segment_name)
+                    if actual_segment_id:
+                        display_node.SetSegmentVisibility(actual_segment_id, True)
+                        display_node.SetSegmentOpacity(actual_segment_id, 0.5)
+                
+                slicer.mrmlScene.RemoveNode(temp_labelmap)
+            
+            print(f"[DEBUG] Loaded mask: {mask_path}")
+            return seg_node
+            
+        except Exception as e:
+            print(f"[DEBUG] Failed to load mask {mask_path}: {e}")
+            return None
 
     def launchSingleViewSegmentation(self, image_type, artifact_list):
         """Launch segmentation editor for a single image (DM or CM)"""
@@ -1593,7 +1688,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # Group into DM/CM pairs
         self.image_pairs = self._group_image_pairs(valid_files)
-        print(self.image_pairs)
+        print("IMage_pars are::",self.image_pairs)
         self.n_pairs = len(self.image_pairs)
         
         logger.info(f'Found {self.n_pairs} complete DM/CM pairs')
@@ -1603,21 +1698,66 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         #print("Path exists",os.path.exists(self.joinpath(directory,"annotations.csv")))
         # Check for existing annotations
         ann_path = os.path.join(directory, "annotations.csv")
+        
+        # **NEW: Check review mode before filtering**
+        review_mode = self.reviewModeCheckbox.isChecked()
+        
         if os.path.exists(ann_path):
             ann_csv = pd.read_csv(ann_path, header=None, index_col=False,
-                                 names=["base_name", "artifact_type", "dm_artifacts","cm_artifacts", "other", "mask_path", "mask_status"])
+                                names=["base_name", "artifact_type", "dm_artifacts","cm_artifacts", 
+                                        "other", "mask_path", "mask_status"])
             
             completed_bases = set(ann_csv['base_name'].values)
-            self.image_pairs = [p for p in self.image_pairs if p['base_name'] not in completed_bases]
+            
+            if review_mode:
+                # **Review mode: KEEP completed cases, mark them for UI indication**
+                for pair in self.image_pairs:
+                    pair['previously_annotated'] = pair['base_name'] in completed_bases
+                logger.info(f'Review mode: Loaded {len(completed_bases)} annotated pairs for review')
+            else:
+                # **Normal mode: SKIP completed cases**
+                uncompleted_pairs = [p for p in self.image_pairs 
+                                if p['base_name'] not in completed_bases]
+                
+                # **FIX: If all are completed in normal mode, switch to review mode automatically**
+                if len(uncompleted_pairs) == 0 and len(self.image_pairs) > 0:
+                    logger.info('All cases completed')
+                    # **REMOVED: Don't auto-switch to review mode**
+                    # self.reviewModeCheckbox.setChecked(True)
+                    # for pair in self.image_pairs:
+                    #     pair['previously_annotated'] = pair['base_name'] in completed_bases
+                    qt.QMessageBox.information(
+                        slicer.util.mainWindow(),
+                        "All Cases Completed",
+                        "All cases have been annotated. Check 'Review Mode' to review them."
+                    )
+                    self.image_pairs = []  # **Clear pairs to prevent loading**
+                    self.n_pairs = 0
+                else:
+                    self.image_pairs = uncompleted_pairs
+                    logger.info(f'Resume mode: {len(self.image_pairs)} pairs remaining')
+            
             self.n_pairs = len(self.image_pairs)
             logger.info(f'Restored session: {self.n_pairs} pairs remaining')
-        
-    
+
         self.ui.status_checked.setText(f"Checked: {self.current_index} / {self.n_pairs}")
-        
+
+        if review_mode and os.path.exists(ann_path):
+            self.ui.status_checked.setText(
+                f"Checked: {self.current_index} / {self.n_pairs} [REVIEW MODE]"
+            )
+
+        # **FIX: Always try to load first pair if any exist**
         if self.n_pairs > 0:
-            print("shoudlnow load new im pair")
+            logger.info(f"Loading first image pair of {self.n_pairs} total")
             self.load_image_pair()
+        else:
+            logger.warning("No image pairs to load")
+            qt.QMessageBox.warning(
+                slicer.util.mainWindow(),
+                "No Images",
+                "No valid DM/CM image pairs found in directory."
+            )
 
      # ______________________________________________________________________________________________________________________________________ ___________________________________________________________________ 
 
@@ -1681,6 +1821,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     def load_image_pair(self):
         """Load a pair of DM and CM images side by side"""
         print(f"[DEBUG] load_image_pair called - _is_loading={self._is_loading}, index={self.current_index}")
+        print(f"[DEBUG] Review mode: {self.reviewModeCheckbox.isChecked()}") 
         
         if self._is_loading:
             print(f"[DEBUG] Already loading, skipping load_image_pair")
@@ -1797,10 +1938,50 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 'CM': cm_volume
             }
 
+            # **NEW: Load existing masks if they exist**
+            mask_info = current_pair.get('masks', {})
+            if mask_info:
+                # Load DM mask if exists
+                if mask_info.get('DM'):
+                    dm_seg = self._load_npy_mask_to_segmentation(
+                        mask_info['DM'], 
+                        current_pair['base_name'], 
+                        '_DM', 
+                        dm_volume
+                    )
+                    if dm_seg:
+                        print(f"[DEBUG] Loaded DM segmentation")
+                
+                # Load CM mask if exists
+                if mask_info.get('CM'):
+                    cm_seg = self._load_npy_mask_to_segmentation(
+                        mask_info['CM'], 
+                        current_pair['base_name'], 
+                        '_CM', 
+                        cm_volume
+                    )
+                    if cm_seg:
+                        print(f"[DEBUG] Loaded CM segmentation")
+                
+                # Load shared mask if exists (for "similar" artifact type)
+                if mask_info.get('shared'):
+                    shared_seg = self._load_npy_mask_to_segmentation(
+                        mask_info['shared'], 
+                        current_pair['base_name'], 
+                        '', 
+                        dm_volume
+                    )
+                    if shared_seg:
+                        print(f"[DEBUG] Loaded shared segmentation")
+
             print(f"[DEBUG] Setting up side-by-side layout...")
             
             # Setup side-by-side layout
             self.setupSideBySideLayout(dm_volume, cm_volume)
+            
+            # **NEW: Configure segmentation visibility on views**
+            if mask_info:
+                qt.QTimer.singleShot(100, lambda: self._configureSegmentationViews(current_pair['base_name']))
 
             print(f"[DEBUG] Layout setup complete")
             
@@ -1809,6 +1990,10 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             # Resume rendering
             slicer.app.layoutManager().setRenderPaused(False)
             slicer.app.processEvents()
+
+             # **NEW: Restore UI state from previous annotation**
+            qt.QTimer.singleShot(150, lambda: self._restore_ui_state_from_annotation(current_pair['base_name']))
+            
             
             print(f"[DEBUG] load_image_pair completed successfully")
             self._is_loading = False
@@ -1832,6 +2017,112 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         finally:
             self._is_loading = False
 
+
+    def _restore_ui_state_from_annotation(self, base_name):
+        """Restore checkbox/radio states from saved annotations"""
+        ann_path = os.path.join(self.directory, "annotations.csv")
+        if not os.path.exists(ann_path):
+            return
+        
+        try:
+            df = pd.read_csv(ann_path, header=None, 
+                            names=["base_name", "artifact_type", "dm_artifacts", 
+                                "cm_artifacts", "other", "mask_path", "mask_status"])
+            
+            match = df[df['base_name'] == base_name]
+            if match.empty:
+                print(f"[DEBUG] No annotation found for {base_name}")
+                return
+            
+            row = match.iloc[0]
+            print(f"[DEBUG] Restoring annotation for {base_name}: {row['artifact_type']}")
+            
+            # **BLOCK ALL SIGNALS DURING RESTORATION**
+            widgets_to_block = [
+                self.ui.radioButton_dm_yes, self.ui.radioButton_dm_no,
+                self.ui.radioButton_cm_yes, self.ui.radioButton_cm_no
+            ]
+            
+            # Add all checkboxes
+            for i in range(1, 10):
+                widgets_to_block.append(getattr(self.ui, f"checkBox_dm_{i}"))
+                widgets_to_block.append(getattr(self.ui, f"checkBox_cm_{i}"))
+            
+            # Block signals
+            for widget in widgets_to_block:
+                widget.blockSignals(True)
+            
+            try:
+                artifact_type = str(row['artifact_type'])
+                
+                # Restore artifact presence indicators
+                if artifact_type == 'none':
+                    self.ui.radioButton_dm_no.setChecked(True)
+                    self.ui.radioButton_cm_no.setChecked(True)
+                elif artifact_type == 'only_dm':
+                    self.ui.radioButton_dm_yes.setChecked(True)
+                    self.ui.radioButton_cm_no.setChecked(True)
+                elif artifact_type == 'only_cm':
+                    self.ui.radioButton_dm_no.setChecked(True)
+                    self.ui.radioButton_cm_yes.setChecked(True)
+                elif artifact_type in ['both_different', 'similar']:
+                    self.ui.radioButton_dm_yes.setChecked(True)
+                    self.ui.radioButton_cm_yes.setChecked(True)
+                
+                # Clear all checkboxes first
+                for i in range(1, 10):
+                    getattr(self.ui, f"checkBox_dm_{i}").setChecked(False)
+                    getattr(self.ui, f"checkBox_cm_{i}").setChecked(False)
+                
+                # Restore artifact checkboxes
+                artifact_mapping = {
+                    "Breast in Breast": 1,
+                    "Skin Line/Thickening": 2,
+                    "Ripple (Motion)": 3,
+                    "Blood Vessels": 4,
+                    "Calcifications": 5,
+                    "Surgical Clip": 6,
+                    "Air Trapping": 7,
+                    "Contrast Splatter": 8,
+                    "Other": 9
+                }
+                
+                # Parse DM artifacts
+                dm_text = str(row['dm_artifacts'])
+                if dm_text and dm_text != 'No artifact' and dm_text != 'nan':
+                    for artifact_name, artifact_id in artifact_mapping.items():
+                        if artifact_name in dm_text:
+                            getattr(self.ui, f"checkBox_dm_{artifact_id}").setChecked(True)
+                            print(f"[DEBUG] Restored DM checkbox {artifact_id}: {artifact_name}")
+                
+                # Parse CM artifacts
+                cm_text = str(row['cm_artifacts'])
+                if cm_text and cm_text != 'No artifact' and cm_text != 'nan':
+                    for artifact_name, artifact_id in artifact_mapping.items():
+                        if artifact_name in cm_text:
+                            getattr(self.ui, f"checkBox_cm_{artifact_id}").setChecked(True)
+                            print(f"[DEBUG] Restored CM checkbox {artifact_id}: {artifact_name}")
+                
+                # Restore comment
+                comment = str(row['other'])
+                if comment and comment != 'nan':
+                    self.ui.comment.setPlainText(comment)
+                
+                print(f"[DEBUG] Successfully restored UI state for {base_name}")
+                
+            finally:
+                # **UNBLOCK SIGNALS**
+                for widget in widgets_to_block:
+                    widget.blockSignals(False)
+                
+                # **NOW MANUALLY UPDATE VISIBILITY ONCE**
+                self.updateCheckboxVisibility()
+                
+        except Exception as e:
+            print(f"[DEBUG] Failed to restore UI state: {e}")
+            import traceback
+            traceback.print_exc()
+
     def _numerical_status_to_str(self, status):
         return {0: "No mask found", 1: "Cannot load mask", 2: "Mask loaded, no edits", 3:"Mask edited"}[status]   
     
@@ -1854,10 +2145,25 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     def save_and_next_clicked(self):
         if self._is_loading:
             return
-        
 
+        # **ADD: Prevent re-entrance**
+        if hasattr(self, '_is_saving') and self._is_saving:
+            print("[DEBUG] Already saving, ignoring duplicate call")
+            return
+        self._is_saving = True
 
         try:
+            # **NEW: Safety check for empty image list**
+            if not self.image_pairs or self.current_index >= len(self.image_pairs):
+                qt.QMessageBox.warning(
+                    slicer.util.mainWindow(),
+                    "No Images",
+                    "No images available to save."
+                )
+                return
+            
+            current_pair = self.image_pairs[self.current_index]
+            
             # 1. Get artifact presence status
             dm_artifacts_present = self.ui.radioButton_dm_yes.isChecked()
             cm_artifacts_present = self.ui.radioButton_cm_yes.isChecked()
@@ -1866,7 +2172,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             
             # Check if user made selections
             if not (dm_artifacts_present or dm_no_artifacts) or not (cm_artifacts_present or cm_no_artifacts):
-                # slicer.util.warningDisplay("Please indicate artifact presence for both DM and CM images.")
+                print("[DEBUG] No selections made, not saving")
                 return
             
             # 2. Build annotation strings
@@ -1874,7 +2180,6 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             cm_annotation = "No artifact"
             artifact_type = "none"
             
-
             if not dm_artifacts_present and not cm_artifacts_present:
                 # Both have no artifacts
                 dm_annotation = "No artifact"
@@ -1922,23 +2227,18 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             
             # 3. Save comment
             comment_text = self.ui.comment.toPlainText()
-            current_pair = self.image_pairs[self.current_index]
             base_name = current_pair['base_name']
-            # 4. Determine mask path to save - ALWAYS save a mask
+            
+            # 4. Determine mask path
             mask_path_str = ""
             mask_status_str = "No mask"
 
             if artifact_type == "none":
-                # Save empty mask for both DM and CM
                 dm_mask_path = self._save_empty_mask(base_name, "_DM")
                 cm_mask_path = self._save_empty_mask(base_name, "_CM")
                 mask_path_str = f"{os.path.basename(dm_mask_path)}, {os.path.basename(cm_mask_path)}"
                 mask_status_str = "Empty mask saved"
             elif dm_artifacts_present or cm_artifacts_present:
-                current_pair = self.image_pairs[self.current_index]
-                base_name = current_pair['base_name']
-                
-                # For both_different, check for both DM and CM masks
                 if artifact_type == "both_different":
                     dm_npy = f"mask_{base_name}_DM.npy"
                     cm_npy = f"mask_{base_name}_CM.npy"
@@ -1953,12 +2253,11 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                     else:
                         mask_status_str = "No mask saved - please use 'Save Outline' button"
                 else:
-                    # For only_dm, only_cm, or similar
                     if artifact_type == "only_dm":
                         suffix = "_DM"
                     elif artifact_type == "only_cm":
                         suffix = "_CM"
-                    else:  # similar
+                    else:
                         suffix = ""
                     
                     npy_filename = f"mask_{base_name}{suffix}.npy"
@@ -1978,7 +2277,24 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                             current_pair['masks']['shared'] = npy_path
                     else:
                         mask_status_str = "No mask saved - please use 'Save Outline' button"
-            # Append to CSV
+            
+            # **MOVED: Only remove existing annotation AFTER all validation passes**
+            ann_path = os.path.join(self.directory, "annotations.csv")
+            if os.path.exists(ann_path):
+                try:
+                    df = pd.read_csv(ann_path, header=None,
+                                    names=["base_name", "artifact_type", "dm_artifacts",
+                                        "cm_artifacts", "other", "mask_path", "mask_status"])
+                    
+                    # If this case already has an annotation, remove it
+                    if current_pair['base_name'] in df['base_name'].values:
+                        df = df[df['base_name'] != current_pair['base_name']]
+                        df.to_csv(ann_path, mode='w', index=False, header=False)
+                        print(f"[DEBUG] Removed old annotation for {current_pair['base_name']}")
+                except Exception as e:
+                    print(f"[DEBUG] Error removing old annotation: {e}")
+            
+            # Append new annotation to CSV
             data = {
                 'base_name': [current_pair['base_name']],
                 'artifact_type': [artifact_type],
@@ -1990,25 +2306,19 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             }
 
             df = pd.DataFrame(data)
-            df.to_csv(self.joinpath(self.directory, "annotations.csv"),
-                    mode='a', index=False, header=False)
+            df.to_csv(ann_path, mode='a', index=False, header=False)
+            print(f"[DEBUG] Saved annotation for {current_pair['base_name']}")
             
             # 5. RESET UI BEFORE LOADING NEXT IMAGE
-            # Reset DM artifact checkboxes
             for i in range(1, 10):
                 getattr(self.ui, f"checkBox_dm_{i}").setChecked(False)
-            
-            # Reset CM artifact checkboxes
-            for i in range(1, 10):
                 getattr(self.ui, f"checkBox_cm_{i}").setChecked(False)
             
-            # Reset DM presence radio buttons
             self.dmPresentGroup.setExclusive(False)
             self.ui.radioButton_dm_yes.setChecked(False)
             self.ui.radioButton_dm_no.setChecked(False)
             self.dmPresentGroup.setExclusive(True)
             
-            # Reset CM presence radio buttons
             self.cmPresentGroup.setExclusive(False)
             self.ui.radioButton_cm_yes.setChecked(False)
             self.ui.radioButton_cm_no.setChecked(False)
@@ -2019,7 +2329,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             
             # Move to next pair
             if self.current_index >= self.n_pairs - 1:
-                print("All pairs checked")
+                print("[DEBUG] All pairs completed")
                 qt.QMessageBox.information(
                     slicer.util.mainWindow(),
                     "Complete",
@@ -2035,8 +2345,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             )
 
         finally:
-            self._is_loading = False
-
+            self._is_saving = False
 
     def store_current_window_level_settings(self):
         """Store current HU window and level settings."""
