@@ -378,7 +378,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Create segmentation node when artifacts are indicated
         if any_artifacts:
             print(f"[DEBUG] Artifacts present, ensuring segmentation node exists")
-            self._ensure_segmentation_node_exists()
+            # self._ensure_segmentation_node_exists()
         else:
             print(f"[DEBUG] No artifacts indicated")
 
@@ -556,6 +556,9 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         try:
             # Load numpy array (width, height, 9)
             combined_mask = np.load(mask_path)
+            combined_mask = np.rot90(combined_mask, k=-1, axes=(0, 1))  # Reverse the k=1 rotation - adjusted this
+            print(f"[DEBUG] Loaded mask shape: {combined_mask.shape}, non-zero classes: {[i for i in range(9) if combined_mask[:,:,i].any()]}")
+        
             
             # Check if mask is all zeros
             if not combined_mask.any():
@@ -567,9 +570,16 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             seg_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
             seg_node.SetName(seg_name)
             seg_node.CreateDefaultDisplayNodes()
-            
+            print(f"[DEBUG] Created segmentation node: {seg_name}, ID: {seg_node.GetID()}")
+        
             # Set reference geometry
             seg_node.SetReferenceImageGeometryParameterFromVolumeNode(ref_volume)
+            print(f"[DEBUG] Set reference geometry from volume: {ref_volume.GetName()}")
+        
+             # Force the segmentation to use the reference volume's coordinate system
+            seg_node.GetSegmentation().SetMasterRepresentationName(
+                slicer.vtkSegmentationConverter.GetSegmentationBinaryLabelmapRepresentationName()
+            )
             
             # Get image dimensions
             dims = ref_volume.GetImageData().GetDimensions()
@@ -586,7 +596,13 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 
                 # Create temporary labelmap
                 temp_labelmap = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode")
-                temp_labelmap.SetAndObserveImageData(ref_volume.GetImageData())
+
+                # **FIX: Create proper image data for labelmap**
+                imageData = vtk.vtkImageData()
+                imageData.SetDimensions(dims[0], dims[1], 1)
+                imageData.AllocateScalars(vtk.VTK_UNSIGNED_CHAR, 1)
+                temp_labelmap.SetAndObserveImageData(imageData)
+                # temp_labelmap.SetAndObserveImageData(ref_volume.GetImageData())
                 
                 labelmap_array = np.zeros((1, dims[1], dims[0]), dtype=np.uint8)
                 labelmap_array[0, :, :] = class_mask
@@ -599,9 +615,13 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 ref_volume.GetIJKToRASMatrix(mat)
                 temp_labelmap.SetIJKToRASMatrix(mat)
                 
+                # Create vtkStringArray for segment names (required by Slicer API)
+                segmentIds = vtk.vtkStringArray()
+                segmentIds.InsertNextValue(segment_name)
+
                 slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(
-                    temp_labelmap, seg_node, [segment_name]
-                )
+                    temp_labelmap, seg_node, segmentIds
+                ) #import segmentation
                 
                 # Set display properties
                 if seg_node.GetDisplayNode():
@@ -613,23 +633,48 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                         display_node.SetSegmentOpacity(actual_segment_id, 0.5)
                 
                 slicer.mrmlScene.RemoveNode(temp_labelmap)
-            
+            print(f"[DEBUG] Final segment count in {seg_name}: {seg_node.GetSegmentation().GetNumberOfSegments()}")
+        
             print(f"[DEBUG] Loaded mask: {mask_path}")
             return seg_node
             
         except Exception as e:
             print(f"[DEBUG] Failed to load mask {mask_path}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def launchSingleViewSegmentation(self, image_type, artifact_list):
         """Launch segmentation editor for a single image (DM or CM)"""
         current_pair = self.image_pairs[self.current_index]
         base_name = current_pair['base_name']
+
+        print(f"[DEBUG] === launchSingleViewSegmentation called ===")
+        print(f"[DEBUG] image_type: {image_type}, base_name: {base_name}")
+        print(f"[DEBUG] artifact_list: {artifact_list}")
+    
+
+            # **ADD: Proper cleanup of segment editor before switching**
+        if hasattr(self, 'segmentEditorWidget'):
+            try:
+                self.segmentEditorWidget.setSegmentationNode(None)
+                self.segmentEditorWidget.setSourceVolumeNode(None)
+                slicer.app.processEvents()  # Process the cleanup
+            except Exception as e:
+                print(f"[DEBUG] Cleanup error: {e}")
+    
         
+        generic_seg_name = f"{base_name}_segmentation"
+        generic_seg = slicer.mrmlScene.GetFirstNodeByName(generic_seg_name)
+        if generic_seg:
+            print(f"[DEBUG] Removing generic segmentation node: {generic_seg_name}")
+            slicer.mrmlScene.RemoveNode(generic_seg)
+
         # Get the volume node
         volume_node = self.volume_pairs[base_name][image_type]
-        
-        # previous segmentation nodes hidden to avoid dm dcm confusion 
+        print(f"[DEBUG] Target volume: {volume_node.GetName()}, ID: {volume_node.GetID()}")
+    
+        # Hide other segmentation nodes to avoid confusion
         all_seg_nodes = slicer.util.getNodesByClass('vtkMRMLSegmentationNode')
         for seg_node in all_seg_nodes:
             if seg_node.GetDisplayNode():
@@ -643,7 +688,31 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Create or get segmentation node
         seg_name = f"{base_name}_{image_type}_segmentation"
         self.segmentation_node = slicer.mrmlScene.GetFirstNodeByName(seg_name)
+        
+        # DEBUG: List existing segments -----------
+        if self.segmentation_node:
+            print(f"[DEBUG] Found existing segmentation: {seg_name}, ID: {self.segmentation_node.GetID()}")
+            print(f"[DEBUG] Existing segment count: {self.segmentation_node.GetSegmentation().GetNumberOfSegments()}")
+            # List segment names
+            seg = self.segmentation_node.GetSegmentation()
+            for i in range(seg.GetNumberOfSegments()):
+                seg_id = seg.GetNthSegmentID(i)
+                seg_name_detail = seg.GetSegment(seg_id).GetName()
+                print(f"[DEBUG]   Segment {i}: {seg_name_detail}")
+        else:
+            print(f"[DEBUG] No existing segmentation found for: {seg_name}")
+        #DBUG: Check for existing segments --------
+
+        # **NEW: Check if node exists with segments already loaded**
+        node_exists_with_segments = False
+        if self.segmentation_node:
+            segmentation = self.segmentation_node.GetSegmentation()
+            if segmentation.GetNumberOfSegments() > 0:
+                node_exists_with_segments = True
+                print(f"[DEBUG] Found existing segmentation with {segmentation.GetNumberOfSegments()} segments")
+        
         if not self.segmentation_node:
+            # Create new node
             self.segmentation_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
             self.segmentation_node.SetName(seg_name)
             self.segmentation_node.CreateDefaultDisplayNodes()
@@ -651,8 +720,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Set reference geometry
         self.segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(volume_node)
         
-        # DM uses warm colors (reds, oranges, yellows)
-        # CM uses cool colors (blues, greens, purples)
+        # Color palettes
         if image_type == "DM":
             color_palette = [
                 [1.0, 0.0, 0.0],      # Red
@@ -678,38 +746,111 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 [0.2, 0.8, 1.0],      # Sky blue
             ]
         
-        # Create segments for each artifact
         segmentation = self.segmentation_node.GetSegmentation()
-        segmentation.RemoveAllSegments()
         
-        for idx, artifact_id in enumerate(artifact_list):
-            artifact_name = self._get_artifact_name(artifact_id)
-            segment_name = f"{artifact_name}_{image_type}"
-            segment_id = segmentation.AddEmptySegment(segment_name)
+        if not node_exists_with_segments:
+            # **ONLY clear segments if this is a fresh node**
+            segmentation.RemoveAllSegments()
             
-            # **NEW: Assign color from palette**
-            segment = segmentation.GetSegment(segment_id)
-            color_idx = idx % len(color_palette)  # Wrap around if more than 9 artifacts
-            segment.SetColor(color_palette[color_idx])
+            # Create empty segments for each artifact
+            for idx, artifact_id in enumerate(artifact_list):
+                artifact_name = self._get_artifact_name(artifact_id)
+                segment_name = f"{artifact_name}_{image_type}"
+                segment_id = segmentation.AddEmptySegment(segment_name)
+                
+                # Assign color from palette
+                segment = segmentation.GetSegment(segment_id)
+                color_idx = idx % len(color_palette)
+                segment.SetColor(color_palette[color_idx])
+                
+                # Set display properties
+                if self.segmentation_node.GetDisplayNode():
+                    display_node = self.segmentation_node.GetDisplayNode()
+                    display_node.SetSegmentVisibility(segment_id, True)
+                    display_node.SetSegmentOpacity(segment_id, 0.5)
+        else:
+            # **KEEP existing segments, only add missing ones**
+            print("[DEBUG] Keeping existing segments, checking for missing artifacts")
             
-            # Set display properties
-            if self.segmentation_node.GetDisplayNode():
-                display_node = self.segmentation_node.GetDisplayNode()
-                display_node.SetSegmentVisibility(segment_id, True)
-                display_node.SetSegmentOpacity(segment_id, 0.5)
+            # Get expected segment names
+            expected_segments = {f"{self._get_artifact_name(a)}_{image_type}": a 
+                            for a in artifact_list}
+            
+            # Get existing segment names
+            existing_segments = {}
+            for i in range(segmentation.GetNumberOfSegments()):
+                seg_id = segmentation.GetNthSegmentID(i)
+                seg_name = segmentation.GetSegment(seg_id).GetName()
+                existing_segments[seg_name] = seg_id
+            
+            # Remove segments that shouldn't be there (user unchecked them)
+            for seg_name, seg_id in list(existing_segments.items()):
+                if seg_name not in expected_segments:
+                    print(f"[DEBUG] Removing unchecked segment: {seg_name}")
+                    segmentation.RemoveSegment(seg_id)
+            
+            # Add missing segments (user newly checked them)
+            for idx, artifact_id in enumerate(artifact_list):
+                artifact_name = self._get_artifact_name(artifact_id)
+                segment_name = f"{artifact_name}_{image_type}"
+                
+                if segment_name not in existing_segments:
+                    print(f"[DEBUG] Adding new segment: {segment_name}")
+                    segment_id = segmentation.AddEmptySegment(segment_name)
+                    
+                    # Assign color
+                    segment = segmentation.GetSegment(segment_id)
+                    color_idx = idx % len(color_palette)
+                    segment.SetColor(color_palette[color_idx])
+                    
+                    # Display properties
+                    if self.segmentation_node.GetDisplayNode():
+                        display_node = self.segmentation_node.GetDisplayNode()
+                        display_node.SetSegmentVisibility(segment_id, True)
+                        display_node.SetSegmentOpacity(segment_id, 0.5)
         
-        # **NEW: Make sure THIS segmentation is visible**
+        # Make sure THIS segmentation is visible
         if self.segmentation_node.GetDisplayNode():
             self.segmentation_node.GetDisplayNode().SetVisibility(True)
         
-        # Setup segment editor
         segmentEditorNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLSegmentEditorNode")
-        if not segmentEditorNode:
-            segmentEditorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentEditorNode")
+        if segmentEditorNode:
+            # Remove old one to ensure clean state
+            slicer.mrmlScene.RemoveNode(segmentEditorNode)
+        
+        # Create fresh node
+        segmentEditorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentEditorNode")
+        segmentEditorNode.SetOverwriteMode(slicer.vtkMRMLSegmentEditorNode.OverwriteNone)
         
         self.segmentEditorWidget.setMRMLSegmentEditorNode(segmentEditorNode)
         self.segmentEditorWidget.setSegmentationNode(self.segmentation_node)
         self.segmentEditorWidget.setSourceVolumeNode(volume_node)
+
+
+        if self.segmentation_node.GetDisplayNode():
+            display_node = self.segmentation_node.GetDisplayNode()
+            display_node.SetVisibility(True)
+            display_node.RemoveAllViewNodeIDs()  # Clear view restrictions
+            display_node.Visibility2DOn()
+            display_node.Visibility3DOn()
+            print(f"[DEBUG] Cleared view restrictions for {self.segmentation_node.GetName()}")
+
+        #DEBUG: Verify geometry -----------\
+    
+        print(f"[DEBUG] === Segment Editor Configuration ===")
+        print(f"[DEBUG] Editor segmentation node: {self.segmentEditorWidget.segmentationNode()}")
+        print(f"[DEBUG] Editor source volume: {self.segmentEditorWidget.sourceVolumeNode()}")
+        if self.segmentEditorWidget.segmentationNode():
+            editor_seg = self.segmentEditorWidget.segmentationNode().GetSegmentation()
+            print(f"[DEBUG] Segments visible in editor: {editor_seg.GetNumberOfSegments()}")
+            for i in range(editor_seg.GetNumberOfSegments()):
+                seg_id = editor_seg.GetNthSegmentID(i)
+                print(f"[DEBUG]   Editor segment {i}: {editor_seg.GetSegment(seg_id).GetName()}")
+
+        #DEBUG: Verify geometry -----------
+
+        # **ADD: Verify geometry is correct**
+        self._verify_segmentation_geometry(self.segmentation_node, volume_node)
         
         # Show editor and create continue button
         self.segmentEditorWidget.setVisible(True)
@@ -748,6 +889,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         else:
             self.continue_segmentation_btn.setText("Finish Segmentation")
 
+        self._debug_print_all_segmentations()
 
     def validateCurrentSegmentation(self):
         """Validate that user has created segments before continuing"""
@@ -770,13 +912,56 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         
         return True
 
+
+    def _verify_segmentation_geometry(self, seg_node, volume_node):
+        """Verify and fix segmentation reference geometry if needed"""
+        if not seg_node or not volume_node:
+            print(f"[DEBUG] _verify_segmentation_geometry: seg_node={seg_node}, volume_node={volume_node}")
+            return False
+        
+        try:
+            print(f"[DEBUG] Verifying geometry for {seg_node.GetName()} against {volume_node.GetName()}")
+            
+            # Check if reference geometry matches
+            seg_node.SetReferenceImageGeometryParameterFromVolumeNode(volume_node)
+            
+            print(f"[DEBUG] Reference geometry set successfully")
+            
+            # Verify the segmentation can be displayed
+            if seg_node.GetDisplayNode():
+                seg_node.GetDisplayNode().SetVisibility(True)
+                seg_node.GetDisplayNode().Visibility2DOn()
+                seg_node.GetDisplayNode().Visibility3DOn()
+                print(f"[DEBUG] Display node visibility enabled")
+            else:
+                print(f"[DEBUG] WARNING: No display node found!")
+            
+            return True
+        except Exception as e:
+            print(f"[DEBUG] Geometry verification failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+        
+
+    def _debug_print_all_segmentations(self):
+        """Debug helper: print all segmentation nodes in scene"""
+        print(f"[DEBUG] === ALL SEGMENTATIONS IN SCENE ===")
+        all_segs = slicer.util.getNodesByClass('vtkMRMLSegmentationNode')
+        for seg in all_segs:
+            print(f"[DEBUG] - {seg.GetName()}: {seg.GetSegmentation().GetNumberOfSegments()} segments")
+            if seg.GetDisplayNode():
+                print(f"[DEBUG]   Visible: {seg.GetDisplayNode().GetVisibility()}")
+            else:
+                print(f"[DEBUG]   NO DISPLAY NODE!")
+
+
     def finalizeSegmentations(self):
         """Clean up and restore UI after segmentation workflow"""
         # Validate final segmentation before finishing
         if not self.validateCurrentSegmentation():
             return
         
-        #  Automatically save the segmentations**
         current_pair = self.image_pairs[self.current_index]
         base_name = current_pair['base_name']
         
@@ -791,11 +976,16 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             dm_seg_node = slicer.mrmlScene.GetFirstNodeByName(dm_seg_name)
             
             if dm_seg_node:
-                dm_path = self._save_segmentation_node(dm_seg_node, base_name, "_DM", 
-                                                    self.volume_pairs[base_name]['DM'])
-                if dm_path:
-                    saved_paths.append(os.path.basename(dm_path))
-                    current_pair['masks']['DM'] = dm_path
+                try:
+                    dm_path = self._save_segmentation_node(dm_seg_node, base_name, "_DM", 
+                                                        self.volume_pairs[base_name]['DM'])
+                    if dm_path:
+                        saved_paths.append(os.path.basename(dm_path))
+                        current_pair['masks']['DM'] = dm_path
+                except Exception as e:
+                    print(f"[DEBUG] Failed to save DM segmentation: {e}")
+                    import traceback
+                    traceback.print_exc()
         
         # Process CM segmentation if exists
         if cm_artifacts_present:
@@ -803,18 +993,25 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             cm_seg_node = slicer.mrmlScene.GetFirstNodeByName(cm_seg_name)
             
             if cm_seg_node:
-                cm_path = self._save_segmentation_node(cm_seg_node, base_name, "_CM",
-                                                    self.volume_pairs[base_name]['CM'])
-                if cm_path:
-                    saved_paths.append(os.path.basename(cm_path))
-                    current_pair['masks']['CM'] = cm_path
+                try:
+                    cm_path = self._save_segmentation_node(cm_seg_node, base_name, "_CM",
+                                                        self.volume_pairs[base_name]['CM'])
+                    if cm_path:
+                        saved_paths.append(os.path.basename(cm_path))
+                        current_pair['masks']['CM'] = cm_path
+                except Exception as e:
+                    print(f"[DEBUG] Failed to save CM segmentation: {e}")
+                    import traceback
+                    traceback.print_exc()
         
         if saved_paths:
-            # Show brief confirmation
             slicer.util.infoDisplay(
                 f"Segmentations saved successfully:\n" + "\n".join(saved_paths),
                 windowTitle="Success"
             )
+        else:
+            slicer.util.warningDisplay("No masks were saved. Please check the console for errors.")
+            return  # Don't continue if save failed
         
         # Reset workflow flag
         self._segmentation_started = False
@@ -831,16 +1028,11 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         cm_volume = self.volume_pairs[base_name]['CM']
         self.setupSideBySideLayout(dm_volume, cm_volume)
         
-        #reconfigure segmentation views after a short delay to ensure layout is ready? check timing
         qt.QTimer.singleShot(50, lambda: self._configureSegmentationViews(base_name))
-    
+        
         # Restore main UI
         self.ui.inputsCollapsibleButton.setVisible(True)
-        
-        # **CHANGED: Don't show the Save Outline button anymore**
-        # self.ui.overwrite_mask.setVisible(True)
         self.ui.go_to_segmentations.setVisible(False)
-
 
     def _configureSegmentationViews(self, base_name):
         """Configure DM and CM segmentations to display on their respective views"""
@@ -975,16 +1167,45 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             
             class_idx = artifact_id - 1
             
-            # Create temporary segmentation with ONLY this segment
+            # **FIX: Create temporary segmentation with proper reference geometry**
             temp_seg_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
             temp_seg_node.SetReferenceImageGeometryParameterFromVolumeNode(ref_volume)
             temp_seg_node.GetSegmentation().CopySegmentFromSegmentation(segmentation, seg_id)
+            # changed from here --------------------------------------------------------------
+            # **FIX: Create SCALAR labelmap volume (not vector)**
+            temp_labelmap = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode")
+            
+            # Set proper dimensions and spacing
+            imageData = vtk.vtkImageData()
+            imageData.SetDimensions(dims[0], dims[1], 1)
+            imageData.AllocateScalars(vtk.VTK_UNSIGNED_CHAR, 1)
+            temp_labelmap.SetAndObserveImageData(imageData)
+            temp_labelmap.SetOrigin(ref_volume.GetOrigin())
+            temp_labelmap.SetSpacing(ref_volume.GetSpacing())
+            
+            # Copy IJK to RAS matrix
+            mat = vtk.vtkMatrix4x4()
+            ref_volume.GetIJKToRASMatrix(mat)
+            temp_labelmap.SetIJKToRASMatrix(mat)
             
             # Export to labelmap
-            temp_labelmap = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode")
-            slicer.modules.segmentations.logic().ExportAllSegmentsToLabelmapNode(
+            success = slicer.modules.segmentations.logic().ExportAllSegmentsToLabelmapNode(
                 temp_seg_node, temp_labelmap, slicer.vtkSegmentation.EXTENT_REFERENCE_GEOMETRY
             )
+            
+            if not success:
+                print(f"[DEBUG] Failed to export segment {segment_name}")
+                slicer.mrmlScene.RemoveNode(temp_labelmap)
+                slicer.mrmlScene.RemoveNode(temp_seg_node)
+                continue
+            
+            # **FIX: Check if scalars exist before converting**
+            scalars = temp_labelmap.GetImageData().GetPointData().GetScalars()
+            if scalars is None:
+                print(f"[DEBUG] No scalar data in labelmap for {segment_name}")
+                slicer.mrmlScene.RemoveNode(temp_labelmap)
+                slicer.mrmlScene.RemoveNode(temp_seg_node)
+                continue
             
             # Get array and add to combined mask
             labelmap_array = slicer.util.arrayFromVolume(temp_labelmap)
@@ -999,6 +1220,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             # Cleanup
             slicer.mrmlScene.RemoveNode(temp_labelmap)
             slicer.mrmlScene.RemoveNode(temp_seg_node)
+            # til here --------------------------------------------------------------
         
         # Save .npy file
         npy_filename = f"mask_{base_name}{suffix}.npy"
@@ -1311,10 +1533,13 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 mat = vtk.vtkMatrix4x4()
                 ref_volume.GetIJKToRASMatrix(mat)
                 temp_labelmap.SetIJKToRASMatrix(mat)
-                # Import to segmentation
+                # Create vtkStringArray for segment names
+                segmentIds = vtk.vtkStringArray()
+                segmentIds.InsertNextValue(segment_name)
+
                 slicer.modules.segmentations.logic().ImportLabelmapToSegmentationNode(
-                    temp_labelmap, self.segmentation_node, [segment_name]
-                )
+                    temp_labelmap, self.segmentation_node, segmentIds
+                )#import segment
 
                 # Ensure display properties are set for imported segment
                 if self.segmentation_node.GetDisplayNode():
