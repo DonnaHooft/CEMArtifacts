@@ -255,29 +255,101 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             # Re-trigger directory loading with new review mode state
             self.onAtlasDirectoryChanged(self.directory)
 
-    def _createSegmentEditorWidget_(self): #this parts creates the segmentation bubblw and corresponding features
+    # def _createSegmentEditorWidget_(self): #this parts creates the segmentation bubblw and corresponding features
+    #     """Create and initialize a customize Slicer Editor which contains just some the tools that we need for the segmentation"""
+
+    #     import qSlicerSegmentationsModuleWidgetsPythonQt
+
+    #     #advancedCollapsibleButton
+    #     self.segmentEditorWidget = qSlicerSegmentationsModuleWidgetsPythonQt.qMRMLSegmentEditorWidget()
+    #     #enable the "add" button
+    #     #self.segmentEditorWidget.setAddSegmentShortcutEnabled(True)
+        
+    #     self.segmentEditorWidget.setMaximumNumberOfUndoStates(10) # 
+    #     self.selectParameterNode()
+    #     self.segmentEditorWidget.setMRMLScene(slicer.mrmlScene)
+    #     self.segmentEditorWidget.unorderedEffectsVisible = False
+    #     self.segmentEditorWidget.setEffectNameOrder([
+    #         'No editing','Threshold',
+    #         'Paint', 'Draw', 
+    #         'Erase','Level tracing',
+    #         'Grow from seeds','Fill between slices',
+    #         'Margin','Hollow',
+    #         'Smoothing','Scissors',
+    #         'Islands','Logical operators',
+    #         'Mask volume'])
+        
+    #     # Add instructions label
+    #     instructions = qt.QLabel(
+    #         "<b>Segmentation Instructions:</b><br>"
+    #         "1. Select artifact checkboxes to indicate which are present<br>"
+    #         "2. Click 'Add' in Segment Editor to create a segment<br>"
+    #         "3. Name segments EXACTLY as: <b>Artifact_Name_DM</b> or <b>Artifact_Name_CM</b><br>"
+    #         "   Examples: 'Skin_Line_DM', 'Calcifications_CM'<br>"
+    #         "   <b>For both_different:</b> Create separate segments for each image type<br>"
+    #         "4. Paint the segmentation on the PRIMARY view<br>"
+    #         "5. <b>IMPORTANT:</b> Click 'Save Outline' to save masks<br>"
+    #         "6. Masks are saved separately for DM and CM based on segment names"
+    #     )
+
+    #     instructions.setWordWrap(True)
+    #     instructions.setStyleSheet("QLabel { padding: 10px; border: 1px solid #cccc00; }")
+    #     self.layout.addWidget(instructions)
+
+    #     self.layout.addWidget(self.segmentEditorWidget) 
+
+    #     # Hide the segmentation editor by default
+    #     self.segmentEditorWidget.setVisible(False)
+    #     # artifact_present = self.ui.radioButton_1.isChecked()
+    #     # self.segmentEditorWidget.setVisible(artifact_present)
+    #     # Observe editor effect registrations to make sure that any effects that are registered
+    #     # later will show up in the segment editor widget. For example, if Segment Editor is set
+    #     # as startup module, additional effects are registered after the segment editor widget is created.
+    #     #self.effectFactorySingleton = slicer.qSlicerSegmentEditorEffectFactory.instance()
+    #     #self.effectFactorySingleton.connect("effectRegistered(QString)", self.editorEffectRegistered)
+
+    #     # Connect observers to scene events
+    #     self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
+    #     self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
+    #     self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndImportEvent, self.onSceneEndImport)
+        
+
+    def _createSegmentEditorWidget_(self):
         """Create and initialize a customize Slicer Editor which contains just some the tools that we need for the segmentation"""
 
         import qSlicerSegmentationsModuleWidgetsPythonQt
 
-        #advancedCollapsibleButton
         self.segmentEditorWidget = qSlicerSegmentationsModuleWidgetsPythonQt.qMRMLSegmentEditorWidget()
-        #enable the "add" button
-        #self.segmentEditorWidget.setAddSegmentShortcutEnabled(True)
         
-        self.segmentEditorWidget.setMaximumNumberOfUndoStates(10) # 
+        self.segmentEditorWidget.setMaximumNumberOfUndoStates(10)
         self.selectParameterNode()
         self.segmentEditorWidget.setMRMLScene(slicer.mrmlScene)
         self.segmentEditorWidget.unorderedEffectsVisible = False
+        
+        # **UPDATED: Optimized effect list for 2D images**
         self.segmentEditorWidget.setEffectNameOrder([
-            'No editing','Threshold',
-            'Paint', 'Draw', 
-            'Erase','Level tracing',
-            'Grow from seeds','Fill between slices',
-            'Margin','Hollow',
-            'Smoothing','Scissors',
-            'Islands','Logical operators',
-            'Mask volume'])
+            'No editing',
+            'Threshold',
+            'Paint', 
+            'Draw', 
+            'Erase',
+            'Level tracing',
+            'Smoothing',
+            'Scissors',
+            'Islands',
+            'Logical operators'
+        ])
+        
+        # **NEW: Hide 3D-related UI elements**
+        self.segmentEditorWidget.findChild(qt.QPushButton, "Show3DButton").setVisible(False) if self.segmentEditorWidget.findChild(qt.QPushButton, "Show3DButton") else None
+        
+        # **NEW: Hide slice rotation controls (not needed for 2D)**
+        try:
+            for widget in self.segmentEditorWidget.findChildren(qt.QWidget):
+                if "rotate" in widget.objectName.lower():
+                    widget.setVisible(False)
+        except:
+            pass
         
         # Add instructions label
         instructions = qt.QLabel(
@@ -298,21 +370,13 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         self.layout.addWidget(self.segmentEditorWidget) 
 
-        # Hide the segmentation editor by default
         self.segmentEditorWidget.setVisible(False)
-        # artifact_present = self.ui.radioButton_1.isChecked()
-        # self.segmentEditorWidget.setVisible(artifact_present)
-        # Observe editor effect registrations to make sure that any effects that are registered
-        # later will show up in the segment editor widget. For example, if Segment Editor is set
-        # as startup module, additional effects are registered after the segment editor widget is created.
-        #self.effectFactorySingleton = slicer.qSlicerSegmentEditorEffectFactory.instance()
-        #self.effectFactorySingleton.connect("effectRegistered(QString)", self.editorEffectRegistered)
-
+        
         # Connect observers to scene events
         self.addObserver(slicer.mrmlScene, slicer.mrmlScene.StartCloseEvent, self.onSceneStartClose)
         self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndCloseEvent, self.onSceneEndClose)
         self.addObserver(slicer.mrmlScene, slicer.mrmlScene.EndImportEvent, self.onSceneEndImport)
-        
+
     def enter(self):
         """Runs whenever the module is reopened"""
         #print("Enter")
@@ -461,92 +525,6 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Launch single-view segmentation
         self.launchSingleViewSegmentation(image_type, artifact_list)
 
-    # def launchSingleViewSegmentation(self, image_type, artifact_list):
-    #     """Launch segmentation editor for a single image (DM or CM)"""
-    #     current_pair = self.image_pairs[self.current_index]
-    #     base_name = current_pair['base_name']
-        
-    #     # Get the volume node
-    #     volume_node = self.volume_pairs[base_name][image_type]
-        
-    #     # Switch to single view layout
-    #     lm = slicer.app.layoutManager()
-    #     lm.setLayout(slicer.vtkMRMLLayoutNode.SlicerLayoutOneUpRedSliceView)
-    #     slicer.util.setSliceViewerLayers(background=volume_node)
-        
-    #     # Create or get segmentation node
-    #     seg_name = f"{base_name}_{image_type}_segmentation"
-    #     self.segmentation_node = slicer.mrmlScene.GetFirstNodeByName(seg_name)
-    #     if not self.segmentation_node:
-    #         self.segmentation_node = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentationNode")
-    #         self.segmentation_node.SetName(seg_name)
-    #         self.segmentation_node.CreateDefaultDisplayNodes()
-        
-    #     # Set reference geometry
-    #     self.segmentation_node.SetReferenceImageGeometryParameterFromVolumeNode(volume_node)
-        
-    #     # Create segments for each artifact
-    #     segmentation = self.segmentation_node.GetSegmentation()
-    #     segmentation.RemoveAllSegments()
-        
-    #     for artifact_id in artifact_list:
-    #         artifact_name = self._get_artifact_name(artifact_id)
-    #         segment_name = f"{artifact_name}_{image_type}"
-    #         segment_id = segmentation.AddEmptySegment(segment_name)
-            
-    #         # Set display properties
-    #         if self.segmentation_node.GetDisplayNode():
-    #             display_node = self.segmentation_node.GetDisplayNode()
-    #             display_node.SetSegmentVisibility(segment_id, True)
-    #             display_node.SetSegmentOpacity(segment_id, 0.5)
-        
-    #     # Setup segment editor
-    #     segmentEditorNode = slicer.mrmlScene.GetFirstNodeByClass("vtkMRMLSegmentEditorNode")
-    #     if not segmentEditorNode:
-    #         segmentEditorNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLSegmentEditorNode")
-        
-    #     self.segmentEditorWidget.setMRMLSegmentEditorNode(segmentEditorNode)
-    #     self.segmentEditorWidget.setSegmentationNode(self.segmentation_node)
-    #     self.segmentEditorWidget.setSourceVolumeNode(volume_node)
-        
-    #     # Show editor and create continue button
-    #     self.segmentEditorWidget.setVisible(True)
-        
-    #     # Add instruction label if not exists
-    #     if not hasattr(self, 'segmentation_instruction'):
-    #         self.segmentation_instruction = qt.QLabel()
-    #         self.layout.addWidget(self.segmentation_instruction)
-        
-    #     self.segmentation_instruction.setText(
-    #         f"<b>Segmenting {image_type} Image</b><br>"
-    #         f"Please segment the following artifacts:<br>"
-    #         + "<br>".join([f"• {self._get_artifact_name(a)}" for a in artifact_list])
-    #     )
-    #     self.segmentation_instruction.setVisible(True)
-        
-    #     # Add continue button with proper connection handling
-    #     if not hasattr(self, 'continue_segmentation_btn'):
-    #         self.continue_segmentation_btn = qt.QPushButton("Continue to Next Image")
-    #         self.layout.addWidget(self.continue_segmentation_btn)
-    #         self.continue_segmentation_btn.clicked.connect(self.processNextSegmentation)
-    #     else:
-    #         # Disconnect old connection before reconnecting
-    #         try:
-    #             self.continue_segmentation_btn.clicked.disconnect()
-    #         except:
-    #             pass
-    #         self.continue_segmentation_btn.clicked.connect(self.processNextSegmentation)
-        
-        
-    #     self.continue_segmentation_btn.setVisible(True)
-    #     # Check if there are more items AFTER this one
-    #     remaining = len(self.segmentation_queue)
-    #     if remaining > 0:
-    #         next_type = self.segmentation_queue[0][0]  # Get next image type
-    #         self.continue_segmentation_btn.setText(f"Continue to {next_type} Image")
-    #     else:
-    #         self.continue_segmentation_btn.setText("Finish Segmentation")
-
     def _load_npy_mask_to_segmentation(self, mask_path, base_name, suffix, ref_volume):
         """Load a .npy mask file and reconstruct segmentation node"""
         if not os.path.exists(mask_path):
@@ -689,20 +667,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         seg_name = f"{base_name}_{image_type}_segmentation"
         self.segmentation_node = slicer.mrmlScene.GetFirstNodeByName(seg_name)
         
-        # DEBUG: List existing segments -----------
-        if self.segmentation_node:
-            print(f"[DEBUG] Found existing segmentation: {seg_name}, ID: {self.segmentation_node.GetID()}")
-            print(f"[DEBUG] Existing segment count: {self.segmentation_node.GetSegmentation().GetNumberOfSegments()}")
-            # List segment names
-            seg = self.segmentation_node.GetSegmentation()
-            for i in range(seg.GetNumberOfSegments()):
-                seg_id = seg.GetNthSegmentID(i)
-                seg_name_detail = seg.GetSegment(seg_id).GetName()
-                print(f"[DEBUG]   Segment {i}: {seg_name_detail}")
-        else:
-            print(f"[DEBUG] No existing segmentation found for: {seg_name}")
-        #DBUG: Check for existing segments --------
-
+    
         # **NEW: Check if node exists with segments already loaded**
         node_exists_with_segments = False
         if self.segmentation_node:
@@ -889,7 +854,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         else:
             self.continue_segmentation_btn.setText("Finish Segmentation")
 
-        self._debug_print_all_segmentations()
+        # self._debug_print_all_segmentations()
 
     def validateCurrentSegmentation(self):
         """Validate that user has created segments before continuing"""
@@ -944,16 +909,16 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             return False
         
 
-    def _debug_print_all_segmentations(self):
-        """Debug helper: print all segmentation nodes in scene"""
-        print(f"[DEBUG] === ALL SEGMENTATIONS IN SCENE ===")
-        all_segs = slicer.util.getNodesByClass('vtkMRMLSegmentationNode')
-        for seg in all_segs:
-            print(f"[DEBUG] - {seg.GetName()}: {seg.GetSegmentation().GetNumberOfSegments()} segments")
-            if seg.GetDisplayNode():
-                print(f"[DEBUG]   Visible: {seg.GetDisplayNode().GetVisibility()}")
-            else:
-                print(f"[DEBUG]   NO DISPLAY NODE!")
+    # def _debug_print_all_segmentations(self):
+    #     """Debug helper: print all segmentation nodes in scene"""
+    #     print(f"[DEBUG] === ALL SEGMENTATIONS IN SCENE ===")
+    #     all_segs = slicer.util.getNodesByClass('vtkMRMLSegmentationNode')
+    #     for seg in all_segs:
+    #         print(f"[DEBUG] - {seg.GetName()}: {seg.GetSegmentation().GetNumberOfSegments()} segments")
+    #         if seg.GetDisplayNode():
+    #             print(f"[DEBUG]   Visible: {seg.GetDisplayNode().GetVisibility()}")
+    #         else:
+    #             print(f"[DEBUG]   NO DISPLAY NODE!")
 
 
     def finalizeSegmentations(self):
