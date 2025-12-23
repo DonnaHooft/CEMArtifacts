@@ -986,6 +986,11 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                     print(f"[DEBUG] Failed to save DM segmentation: {e}")
                     import traceback
                     traceback.print_exc()
+        else:
+            # NEW: Save empty mask for DM
+            dm_path = self._save_empty_mask(base_name, "_DM")
+            saved_paths.append(os.path.basename(dm_path))
+            current_pair['masks']['DM'] = dm_path
         
         # Process CM segmentation if exists
         if cm_artifacts_present:
@@ -1003,6 +1008,11 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                     print(f"[DEBUG] Failed to save CM segmentation: {e}")
                     import traceback
                     traceback.print_exc()
+        else:
+            # NEW: Save empty mask for CM
+            cm_path = self._save_empty_mask(base_name, "_CM")
+            saved_paths.append(os.path.basename(cm_path))
+            current_pair['masks']['CM'] = cm_path
         
         if saved_paths:
             slicer.util.infoDisplay(
@@ -1380,7 +1390,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         
         # Create empty mask array (width, height, 9)
         combined_mask = np.zeros((dims[0], dims[1], 9), dtype=np.uint8)
-        
+        combined_mask = np.rot90(combined_mask, k=-1, axes=(0, 1))
         # Save as .npy
         npy_filename = f"mask_{base_name}{suffix}.npy"
         npy_path = os.path.join(self.directory, npy_filename)
