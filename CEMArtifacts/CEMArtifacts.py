@@ -104,6 +104,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.window_level = None   # To store current window/level settings
         self.segment_visiblity_states = {}  # Dictionary to store the visibility toggle of each segment
         self._is_loading = False # Flag to prevent re-entrance during loading
+        self._segmentation_completed = False  
 
 
 
@@ -184,8 +185,10 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Connect new radio button groups
         self.ui.radioButton_dm_yes.toggled.connect(self.updateCheckboxVisibility)
         self.ui.radioButton_dm_no.toggled.connect(self.updateCheckboxVisibility)
+        self.ui.radioButton_dm_no.toggled.connect(self.clearSegmentationWhenNoSelected)
         self.ui.radioButton_cm_yes.toggled.connect(self.updateCheckboxVisibility)
         self.ui.radioButton_cm_no.toggled.connect(self.updateCheckboxVisibility)
+        self.ui.radioButton_cm_no.toggled.connect(self.clearSegmentationWhenNoSelected)
 
         # Create button groups for new radio buttons
         self.dmPresentGroup = qt.QButtonGroup()
@@ -199,6 +202,11 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.cmPresentGroup.setExclusive(True)
 
         # After the existing connections (around line 150)
+        # Connect artifact checkboxes to update button visibility
+        for i in range(1, 10):
+            getattr(self.ui, f"checkBox_dm_{i}").toggled.connect(self.updateCheckboxVisibility)
+            getattr(self.ui, f"checkBox_cm_{i}").toggled.connect(self.updateCheckboxVisibility)
+
         self.ui.go_to_segmentations = qt.QPushButton("Go to Segmentations")
         self.ui.go_to_segmentations.setVisible(False)
         self.ui.inputsCollapsibleButton.layout().addWidget(self.ui.go_to_segmentations)
@@ -352,16 +360,17 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             pass
         
         # Add instructions label
+        # Add instructions label
         instructions = qt.QLabel(
             "<b>Segmentation Instructions:</b><br>"
-            "1. Select artifact checkboxes to indicate which are present<br>"
-            "2. Click 'Add' in Segment Editor to create a segment<br>"
-            "3. Name segments EXACTLY as: <b>Artifact_Name_DM</b> or <b>Artifact_Name_CM</b><br>"
-            "   Examples: 'Skin_Line_DM', 'Calcifications_CM'<br>"
-            "   <b>For both_different:</b> Create separate segments for each image type<br>"
-            "4. Paint the segmentation on the PRIMARY view<br>"
-            "5. <b>IMPORTANT:</b> Click 'Save Outline' to save masks<br>"
-            "6. Masks are saved separately for DM and CM based on segment names"
+            "1. Select artifact checkboxes to indicate which artifacts are present on LE and/or Recombined<br>"
+            "2. Click <b>'Go to Segmentations'</b> button to start the guided workflow<br>"
+            "3. The extension will automatically create properly-named segments for you<br>"
+            "4. Use the Paint/Draw tools to segment each artifact shown in the instruction panel<br>"
+            "5. Click <b>'Continue to [Next Image]'</b> to move between LE and Recombined images<br>"
+            "6. Click <b>'Finish Segmentation'</b> when complete - masks are saved automatically<br>"
+            "<br>"
+            "<b>Note:</b> Segments are color-coded (red tones for LE, blue tones for Recombined)"
         )
 
         instructions.setWordWrap(True)
@@ -400,6 +409,31 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 self.segmentEditorWidget.setSourceVolumeNodeID(self.sourceVolumeNodeID)
         self.initializeParameterNode()
     
+    def _artifacts_properly_selected(self):
+        """Check if at least one artifact is selected for each 'Yes' indication"""
+        dm_artifacts_present = self.ui.radioButton_dm_yes.isChecked()
+        cm_artifacts_present = self.ui.radioButton_cm_yes.isChecked()
+        
+        # If DM has artifacts, check if at least one DM checkbox is selected
+        if dm_artifacts_present:
+            dm_has_selection = any(
+                getattr(self.ui, f"checkBox_dm_{i}").isChecked() 
+                for i in range(1, 10)
+            )
+            if not dm_has_selection:
+                return False
+        
+        # If CM has artifacts, check if at least one CM checkbox is selected
+        if cm_artifacts_present:
+            cm_has_selection = any(
+                getattr(self.ui, f"checkBox_cm_{i}").isChecked() 
+                for i in range(1, 10)
+            )
+            if not cm_has_selection:
+                return False
+    
+        return dm_artifacts_present or cm_artifacts_present
+
     def updateCheckboxVisibility(self):
         """Control visibility of artifact selection UI based on DM/CM artifact presence"""
         dm_artifacts_present = self.ui.radioButton_dm_yes.isChecked()
@@ -413,9 +447,6 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # Show/hide CM artifact checkboxes
         self.ui.buttongroup_cm.setVisible(cm_artifacts_present)
         
-        # Hide the original artifact group (not needed in new logic)
-        # self.ui.buttongroup.setVisible(False)
-        
         # Show quick save button only if both are "No"
         both_no_artifacts = dm_no_artifacts and cm_no_artifacts
         self.ui.quick_save_and_next.setVisible(both_no_artifacts)
@@ -428,23 +459,54 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         for i in range(1, 10):
             getattr(self.ui, f"checkBox_cm_{i}").setEnabled(cm_artifacts_present)
         
-        # Show/hide the segmentation editor (only if any artifacts present)
+        # Show/hide "Go to Segmentations" button (only if artifacts properly selected)
+        self.ui.go_to_segmentations.setVisible(self._artifacts_properly_selected())
+        
+        # **NEW: Show/hide main "Save, Open Next" button**
+        # Only show if: (1) no artifacts selected OR (2) segmentation completed
         any_artifacts = dm_artifacts_present or cm_artifacts_present
-        self.ui.go_to_segmentations.setVisible(any_artifacts)
+        if any_artifacts:
+            # If artifacts are selected, only show save button if segmentation completed
+            self.ui.save_and_next.setVisible(self._segmentation_completed)
+        else:
+            # If no artifacts (both "No"), hide normal save button (quick save is shown instead)
+            self.ui.save_and_next.setVisible(not both_no_artifacts)
         
         # Hide the old segmentation editor and save button initially
         self.segmentEditorWidget.setVisible(False)
         self.ui.overwrite_mask.setVisible(False)
         
-        # Setup segmentation when visibility changes
-        # if any_artifacts:
-        #     self.setup_segmentation_for_current_selection()
         # Create segmentation node when artifacts are indicated
         if any_artifacts:
             print(f"[DEBUG] Artifacts present, ensuring segmentation node exists")
-            # self._ensure_segmentation_node_exists()
         else:
             print(f"[DEBUG] No artifacts indicated")
+
+    def clearSegmentationWhenNoSelected(self):
+        """Clear segmentation when user selects 'No' for artifacts"""
+        if not self.image_pairs or self.current_index >= len(self.image_pairs):
+            return
+        
+        current_pair = self.image_pairs[self.current_index]
+        base_name = current_pair['base_name']
+        
+        # Clear DM segmentation if "No" is selected
+        if self.ui.radioButton_dm_no.isChecked():
+            dm_seg_name = f"{base_name}_DM_segmentation"
+            dm_seg_node = slicer.mrmlScene.GetFirstNodeByName(dm_seg_name)
+            if dm_seg_node:
+                segmentation = dm_seg_node.GetSegmentation()
+                segmentation.RemoveAllSegments()
+                print(f"[DEBUG] Cleared LE segmentation for {base_name}")
+        
+        # Clear CM segmentation if "No" is selected
+        if self.ui.radioButton_cm_no.isChecked():
+            cm_seg_name = f"{base_name}_CM_segmentation"
+            cm_seg_node = slicer.mrmlScene.GetFirstNodeByName(cm_seg_name)
+            if cm_seg_node:
+                segmentation = cm_seg_node.GetSegmentation()
+                segmentation.RemoveAllSegments()
+                print(f"[DEBUG] Cleared Recombined segmentation for {base_name}")
 
     def _ensure_segmentation_node_exists(self):
         """Create a segmentation node if one doesn't exist"""
@@ -802,9 +864,9 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         #DEBUG: Verify geometry -----------\
     
-        print(f"[DEBUG] === Segment Editor Configuration ===")
-        print(f"[DEBUG] Editor segmentation node: {self.segmentEditorWidget.segmentationNode()}")
-        print(f"[DEBUG] Editor source volume: {self.segmentEditorWidget.sourceVolumeNode()}")
+        # print(f"[DEBUG] === Segment Editor Configuration ===")
+        # print(f"[DEBUG] Editor segmentation node: {self.segmentEditorWidget.segmentationNode()}")
+        # print(f"[DEBUG] Editor source volume: {self.segmentEditorWidget.sourceVolumeNode()}")
         if self.segmentEditorWidget.segmentationNode():
             editor_seg = self.segmentEditorWidget.segmentationNode().GetSegmentation()
             print(f"[DEBUG] Segments visible in editor: {editor_seg.GetNumberOfSegments()}")
@@ -877,6 +939,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         
         return True
 
+    
 
     def _verify_segmentation_geometry(self, seg_node, volume_node):
         """Verify and fix segmentation reference geometry if needed"""
@@ -981,13 +1044,15 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         
         if saved_paths:
             slicer.util.infoDisplay(
-                f"Segmentations saved successfully:\n" + "\n".join(saved_paths),
+                f"Segmentations saved successfully!",
                 windowTitle="Success"
             )
         else:
             slicer.util.warningDisplay("No masks were saved. Please check the console for errors.")
             return  # Don't continue if save failed
-        
+        # **ADD THIS LINE - CRITICAL FIX:**
+        self._segmentation_completed = True
+        print(f"[DEBUG] Segmentation workflow completed, flag set to True")
         # Reset workflow flag
         self._segmentation_started = False
         
@@ -1007,7 +1072,12 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         
         # Restore main UI
         self.ui.inputsCollapsibleButton.setVisible(True)
-        self.ui.go_to_segmentations.setVisible(False)
+        # **CHANGED: Keep "Go to Segmentations" visible so user can edit**
+        self.ui.go_to_segmentations.setVisible(True)
+        
+        # **NEW: Show the "Save, Open Next" button now**
+        self.ui.save_and_next.setVisible(True)
+
 
     def _configureSegmentationViews(self, base_name):
         """Configure DM and CM segmentations to display on their respective views"""
@@ -1093,7 +1163,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 return
         
         if saved_paths:
-            slicer.util.infoDisplay(f"Segmentation saved successfully:\n" + "\n".join(saved_paths) + "\nand individual PNG files")
+            slicer.util.infoDisplay(f"Segmentation saved successfully and individual PNG files")
         else:
             slicer.util.warningDisplay("No masks were saved.")
 
@@ -1355,7 +1425,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         
         # Create empty mask array (width, height, 9)
         combined_mask = np.zeros((dims[0], dims[1], 9), dtype=np.uint8)
-        combined_mask = np.rot90(combined_mask, k=-1, axes=(0, 1))
+        combined_mask = np.rot90(combined_mask, k=1, axes=(0, 1))
         # Save as .npy
         npy_filename = f"mask_{base_name}{suffix}.npy"
         npy_path = os.path.join(self.directory, npy_filename)
@@ -2131,7 +2201,10 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 print(f"[DEBUG] CM volume loaded: {cm_volume.GetName()} ({num_components} components)")
             else:
                 raise Exception(f"Could not load CM image: {cm_path}")
-     
+
+
+            self._segmentation_completed = False
+
             # Store volume pair
             self.volume_pairs[current_pair['base_name']] = {
                 'DM': dm_volume,
@@ -2140,6 +2213,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
             # **NEW: Load existing masks if they exist**
             mask_info = current_pair.get('masks', {})
+            masks_loaded = False
             if mask_info:
                 # Load DM mask if exists
                 if mask_info.get('DM'):
@@ -2173,6 +2247,14 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                     )
                     if shared_seg:
                         print(f"[DEBUG] Loaded shared segmentation")
+
+                if mask_info.get('DM') or mask_info.get('CM') or mask_info.get('shared'):
+                    masks_loaded = True
+            # **Set flag BEFORE UI restoration**
+            if masks_loaded:
+                self._segmentation_completed = True
+                print(f"[DEBUG] Masks loaded, marking segmentation as completed")
+
 
             print(f"[DEBUG] Setting up side-by-side layout...")
             
@@ -2317,6 +2399,11 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 
                 # **NOW MANUALLY UPDATE VISIBILITY ONCE**
                 self.updateCheckboxVisibility()
+
+                # **NEW: If in review mode with existing annotations, ensure save button is visible**
+            if self._segmentation_completed:
+                self.ui.save_and_next.setVisible(True)
+                print(f"[DEBUG] Review mode: showing save button for {base_name}")
                 
         except Exception as e:
             print(f"[DEBUG] Failed to restore UI state: {e}")
@@ -2371,8 +2458,20 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             cm_no_artifacts = self.ui.radioButton_cm_no.isChecked()
             
             # Check if user made selections
-            if not (dm_artifacts_present or dm_no_artifacts) or not (cm_artifacts_present or cm_no_artifacts):
-                print("[DEBUG] No selections made, not saving")
+            if not (dm_artifacts_present or dm_no_artifacts):
+                qt.QMessageBox.warning(
+                    slicer.util.mainWindow(),
+                    "Selection Required",
+                    "Please select Yes/No for artifacts present on LE."
+                )
+                return
+                
+            if not (cm_artifacts_present or cm_no_artifacts):
+                qt.QMessageBox.warning(
+                    slicer.util.mainWindow(),
+                    "Selection Required",
+                    "Please select Yes/No for artifacts present on Recombined."
+                )
                 return
             
             # 2. Build annotation strings
@@ -2524,6 +2623,10 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             self.ui.radioButton_cm_no.setChecked(False)
             self.cmPresentGroup.setExclusive(True)
             
+            # **NEW: Reset segmentation completed flag for next image**
+            self._segmentation_completed = False
+
+
             self.ui.comment.clear()
             slicer.app.processEvents()
             
