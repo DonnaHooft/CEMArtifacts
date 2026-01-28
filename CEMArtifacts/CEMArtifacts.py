@@ -203,7 +203,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
 
         # After the existing connections (around line 150)
         # Connect artifact checkboxes to update button visibility
-        for i in range(1, 10):
+        for i in range(1, 9):
             getattr(self.ui, f"checkBox_dm_{i}").toggled.connect(self.updateCheckboxVisibility)
             getattr(self.ui, f"checkBox_cm_{i}").toggled.connect(self.updateCheckboxVisibility)
 
@@ -237,7 +237,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         # self._segmentation_update_timer.setSingleShot(True)
         # self._segmentation_update_timer.timeout.connect(self.setup_segmentation_for_current_selection)
 
-        # for i in range(1, 10):
+        # for i in range(1, 9):
         #     getattr(self.ui, f"checkBox_dm_{i}").toggled.connect(
         #         lambda checked, timer=self._segmentation_update_timer: timer.start(300)
         #     )
@@ -418,7 +418,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         if dm_artifacts_present:
             dm_has_selection = any(
                 getattr(self.ui, f"checkBox_dm_{i}").isChecked() 
-                for i in range(1, 10)
+                for i in range(1, 9)
             )
             if not dm_has_selection:
                 return False
@@ -427,7 +427,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         if cm_artifacts_present:
             cm_has_selection = any(
                 getattr(self.ui, f"checkBox_cm_{i}").isChecked() 
-                for i in range(1, 10)
+                for i in range(1, 9)
             )
             if not cm_has_selection:
                 return False
@@ -452,11 +452,11 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         self.ui.quick_save_and_next.setVisible(both_no_artifacts)
         
         # Enable/disable DM checkboxes
-        for i in range(1, 10):
+        for i in range(1, 9):
             getattr(self.ui, f"checkBox_dm_{i}").setEnabled(dm_artifacts_present)
         
         # Enable/disable CM checkboxes
-        for i in range(1, 10):
+        for i in range(1, 9):
             getattr(self.ui, f"checkBox_cm_{i}").setEnabled(cm_artifacts_present)
         
         # Show/hide "Go to Segmentations" button (only if artifacts properly selected)
@@ -546,12 +546,12 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         cm_artifact_list = []
         
         if dm_artifacts_present:
-            for i in range(1, 10):
+            for i in range(1, 9):
                 if getattr(self.ui, f"checkBox_dm_{i}").isChecked():
                     dm_artifact_list.append(i)
         
         if cm_artifacts_present:
-            for i in range(1, 10):
+            for i in range(1, 9):
                 if getattr(self.ui, f"checkBox_cm_{i}").isChecked():
                     cm_artifact_list.append(i)
         
@@ -625,7 +625,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             dims = ref_volume.GetImageData().GetDimensions()
             
             # Process each of the 9 artifact classes
-            for class_idx in range(9):
+            for class_idx in range(8):
                 class_mask = combined_mask[:, :, class_idx].T
                 
                 if not class_mask.any():
@@ -1117,7 +1117,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 print(f"[DEBUG] Configured {cm_seg_name} to show on Yellow view")
 
     def overwrite_mask_clicked(self):
-        """Save segmentation as numpy array (always 9 classes) and individual PNG files - separately for DM and CM"""
+        """Save segmentation as numpy array (always 8 classes) and individual PNG files - separately for DM and CM"""
         
         current_pair = self.image_pairs[self.current_index]
         base_name = current_pair['base_name']
@@ -1183,7 +1183,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         image_height, image_width = dims[1], dims[0]
         
         # Initialize combined mask array
-        combined_mask = np.zeros((image_width, image_height, 9), dtype=np.uint8)
+        combined_mask = np.zeros((image_width, image_height, 8), dtype=np.uint8)
         
         artifact_name_to_id = {
             "Breast_in_Breast": 1,
@@ -1191,10 +1191,9 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             "Ripple_Motion": 3,
             "Blood_Vessels": 4,
             "Calcifications": 5,
-            "Surgical_Clip": 6,
-            "Air_Trapping": 7,
-            "Contrast_Splatter": 8,
-            "Other": 9
+            "Marker_Surgical_Clip": 6,
+            "Air_Trapping_Skin_Folds": 7,
+            "Other": 8
         }
         
         # Process each segment
@@ -1280,7 +1279,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             slicer.util.pip_install('pillow')
             from PIL import Image
         
-        for class_idx in range(9):
+        for class_idx in range(8):
             if combined_mask[:, :, class_idx].any():
                 artifact_name = self._get_artifact_name(class_idx + 1)
                 png_filename = f"mask_{base_name}{suffix}_{artifact_name}.png"
@@ -1403,10 +1402,9 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             3: "Ripple_Motion",
             4: "Blood_Vessels",
             5: "Calcifications",
-            6: "Surgical_Clip",
-            7: "Air_Trapping",
-            8: "Contrast_Splatter",
-            9: "Other"
+            6: "Marker_Surgical_Clip",
+            7: "Air_Trapping_Skin_Folds",
+            8: "Other"
         }
         return mapping.get(artifact_id, f"Artifact_{artifact_id}")
     
@@ -1424,7 +1422,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         dims = ref_volume.GetImageData().GetDimensions()
         
         # Create empty mask array (width, height, 9)
-        combined_mask = np.zeros((dims[0], dims[1], 9), dtype=np.uint8)
+        combined_mask = np.zeros((dims[0], dims[1], 8), dtype=np.uint8)
         combined_mask = np.rot90(combined_mask, k=1, axes=(0, 1))
         # Save as .npy
         npy_filename = f"mask_{base_name}{suffix}.npy"
@@ -1542,8 +1540,8 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             # Get image dimensions
             dims = ref_volume.GetImageData().GetDimensions()
             
-            # Process each of the 9 artifact classes
-            for class_idx in range(9):
+            # Process each of the 8 artifact classes
+            for class_idx in range(8):
                 # Extract mask for this class (transpose back from width,height to match image orientation)
                 class_mask = combined_mask[:, :, class_idx].T
                 
@@ -1628,12 +1626,12 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
         artifact_type = None
         
         if dm_artifacts_present:
-            for i in range(1, 10):
+            for i in range(1, 9):
                 if getattr(self.ui, f"checkBox_dm_{i}").isChecked():
                     dm_artifacts.append(i)
         
         if cm_artifacts_present:
-            for i in range(1, 10):
+            for i in range(1, 9):
                 if getattr(self.ui, f"checkBox_cm_{i}").isChecked():
                     cm_artifacts.append(i)
         
@@ -2326,7 +2324,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             ]
             
             # Add all checkboxes
-            for i in range(1, 10):
+            for i in range(1, 9):
                 widgets_to_block.append(getattr(self.ui, f"checkBox_dm_{i}"))
                 widgets_to_block.append(getattr(self.ui, f"checkBox_cm_{i}"))
             
@@ -2352,21 +2350,20 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                     self.ui.radioButton_cm_yes.setChecked(True)
                 
                 # Clear all checkboxes first
-                for i in range(1, 10):
+                for i in range(1, 9):
                     getattr(self.ui, f"checkBox_dm_{i}").setChecked(False)
                     getattr(self.ui, f"checkBox_cm_{i}").setChecked(False)
                 
                 # Restore artifact checkboxes
                 artifact_mapping = {
-                    "Breast in Breast": 1,
-                    "Skin Line/Thickening": 2,
-                    "Ripple (Motion)": 3,
-                    "Blood Vessels": 4,
+                    "Breast-in-breast": 1,
+                    "Skin line / thickening": 2,
+                    "Ripple (motion)": 3,
+                    "Blood vessels": 4,
                     "Calcifications": 5,
-                    "Surgical Clip": 6,
-                    "Air Trapping": 7,
-                    "Contrast Splatter": 8,
-                    "Other": 9
+                    "Marker / surgical clip": 6,
+                    "Air trapping / Skin folds": 7,
+                    "Other": 8
                 }
                 
                 # Parse DM artifacts
@@ -2415,16 +2412,15 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     
     def _artifacts_to_str(self, artifact_ids):
         mapping = {
-            1: "Breast in Breast",
-            2: "Skin Line/Thickening",
-            3: "Ripple (Motion)",
-            4: "Blood Vessels",
-            5: "Calcifications",
-            6: "Surgical Clip",
-            7: "Air Trapping",
-            8: "Contrast Splatter",
-            9: "Other"
-        }
+        1: "Breast-in-breast",
+        2: "Skin line / thickening",
+        3: "Ripple (motion)",
+        4: "Blood vessels",
+        5: "Calcifications",
+        6: "Marker / surgical clip",
+        7: "Air trapping / Skin folds",
+        8: "Other"
+    }
         return ", ".join([mapping[i] for i in artifact_ids])
     #DO these have to be ina ccordance iwht button from .ui? ie or is labels for csv files?
 # ______________________________________________________________________________________________________________________________________ ___________________________________________________________________ 
@@ -2488,7 +2484,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 # Collect DM artifacts
                 dm_artifact_list = []
                 if dm_artifacts_present:
-                    for i in range(1, 10):
+                    for i in range(1, 9):
                         checkbox = getattr(self.ui, f"checkBox_dm_{i}")
                         if checkbox.isChecked():
                             dm_artifact_list.append(i)
@@ -2502,7 +2498,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
                 # Collect CM artifacts
                 cm_artifact_list = []
                 if cm_artifacts_present:
-                    for i in range(1, 10):
+                    for i in range(1, 9):
                         checkbox = getattr(self.ui, f"checkBox_cm_{i}")
                         if checkbox.isChecked():
                             cm_artifact_list.append(i)
@@ -2609,7 +2605,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             print(f"[DEBUG] Saved annotation for {current_pair['base_name']}")
             
             # 5. RESET UI BEFORE LOADING NEXT IMAGE
-            for i in range(1, 10):
+            for i in range(1, 9):
                 getattr(self.ui, f"checkBox_dm_{i}").setChecked(False)
                 getattr(self.ui, f"checkBox_cm_{i}").setChecked(False)
             

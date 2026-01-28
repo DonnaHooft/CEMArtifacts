@@ -71,7 +71,7 @@
                       <property name="minimumSize">
                         <size>
                           <width>0</width>
-                          <height>210</height>
+                          <height>200</height>
                         </size>
                       </property>
                       <property name="visible">
@@ -85,7 +85,7 @@
                           <rect>
                             <x>10</x>
                             <y>20</y>
-                            <width>151</width>
+                            <width>190</width>
                             <height>20</height>
                           </rect>
                         </property>
@@ -98,7 +98,7 @@
                           <rect>
                             <x>10</x>
                             <y>40</y>
-                            <width>151</width>
+                            <width>190</width>
                             <height>20</height>
                           </rect>
                         </property>
@@ -111,7 +111,7 @@
                           <rect>
                             <x>10</x>
                             <y>60</y>
-                            <width>151</width>
+                            <width>190</width>
                             <height>20</height>
                           </rect>
                         </property>
@@ -124,7 +124,7 @@
                           <rect>
                             <x>10</x>
                             <y>80</y>
-                            <width>151</width>
+                            <width>190</width>
                             <height>20</height>
                           </rect>
                         </property>
@@ -137,7 +137,7 @@
                           <rect>
                             <x>10</x>
                             <y>100</y>
-                            <width>151</width>
+                            <width>190</width>
                             <height>20</height>
                           </rect>
                         </property>
@@ -150,12 +150,12 @@
                           <rect>
                             <x>10</x>
                             <y>120</y>
-                            <width>151</width>
+                            <width>190</width>
                             <height>20</height>
                           </rect>
                         </property>
                         <property name="text">
-                          <string>6 - Surgical Clip</string>
+                          <string>6 - Marker/ Surgical Clip</string>
                         </property>
                       </widget>
                       <widget class="QCheckBox" name="checkBox_dm_7">
@@ -163,12 +163,12 @@
                           <rect>
                             <x>10</x>
                             <y>140</y>
-                            <width>151</width>
+                            <width>190</width>
                             <height>20</height>
                           </rect>
                         </property>
                         <property name="text">
-                          <string>7 - Air Trapping</string>
+                          <string>7 - Air Trapping/ Skin Folds</string>
                         </property>
                       </widget>
                       <widget class="QCheckBox" name="checkBox_dm_8">
@@ -176,29 +176,17 @@
                           <rect>
                             <x>10</x>
                             <y>160</y>
-                            <width>151</width>
+                            <width>190</width>
                             <height>20</height>
                           </rect>
                         </property>
                         <property name="text">
-                          <string>8 - Contrast Splatter</string>
+                          <string>8 - Other </string>
                         </property>
                       </widget>
 
 
-                      <widget class="QCheckBox" name="checkBox_dm_9">
-                        <property name="geometry">
-                          <rect>
-                            <x>10</x>
-                            <y>180</y>
-                            <width>151</width>
-                            <height>20</height>
-                          </rect>
-                        </property>
-                        <property name="text">
-                          <string>9 - Other</string>
-                        </property>
-                      </widget>
+                      
                     </widget>
                   </item>
                   
@@ -207,7 +195,7 @@
                       <property name="minimumSize">
                         <size>
                           <width>0</width>
-                          <height>210</height>
+                          <height>200</height>
                         </size>
                       </property>
                       <property name="visible">
@@ -221,7 +209,7 @@
                           <rect>
                             <x>10</x>
                             <y>20</y>
-                            <width>151</width>
+                            <width>190</width>
                             <height>20</height>
                           </rect>
                         </property>
@@ -234,7 +222,7 @@
                           <rect>
                             <x>10</x>
                             <y>40</y>
-                            <width>151</width>
+                            <width>190</width>
                             <height>20</height>
                           </rect>
                         </property>
@@ -247,7 +235,7 @@
                           <rect>
                             <x>10</x>
                             <y>60</y>
-                            <width>151</width>
+                            <width>190</width>
                             <height>20</height>
                           </rect>
                         </property>
@@ -260,7 +248,7 @@
                           <rect>
                             <x>10</x>
                             <y>80</y>
-                            <width>151</width>
+                            <width>190</width>
                             <height>20</height>
                           </rect>
                         </property>
@@ -273,7 +261,7 @@
                           <rect>
                             <x>10</x>
                             <y>100</y>
-                            <width>151</width>
+                            <width>190</width>
                             <height>20</height>
                           </rect>
                         </property>
@@ -286,12 +274,12 @@
                           <rect>
                             <x>10</x>
                             <y>120</y>
-                            <width>151</width>
+                            <width>190</width>
                             <height>20</height>
                           </rect>
                         </property>
                         <property name="text">
-                          <string>6 - Surgical Clip</string>
+                          <string>6 - Marker/ Surgical Clip</string>
                         </property>
                       </widget>
                       <widget class="QCheckBox" name="checkBox_cm_7">
@@ -299,12 +287,12 @@
                           <rect>
                             <x>10</x>
                             <y>140</y>
-                            <width>151</width>
+                            <width>190</width>
                             <height>20</height>
                           </rect>
                         </property>
                         <property name="text">
-                          <string>7 - Air Trapping</string>
+                          <string>7 - Air Trapping/ Skin Folds</string>
                         </property>
                       </widget>
                       <widget class="QCheckBox" name="checkBox_cm_8">
@@ -312,27 +300,15 @@
                           <rect>
                             <x>10</x>
                             <y>160</y>
-                            <width>151</width>
+                            <width>190</width>
                             <height>20</height>
                           </rect>
                         </property>
                         <property name="text">
-                          <string>8 - Contrast Splatter</string>
+                          <string>8 - Other </string>
                         </property>
                       </widget>
-                      <widget class="QCheckBox" name="checkBox_cm_9">
-                        <property name="geometry">
-                          <rect>
-                            <x>10</x>
-                            <y>180</y>
-                            <width>151</width>
-                            <height>20</height>
-                          </rect>
-                        </property>
-                        <property name="text">
-                          <string>9 - Other</string>
-                        </property>
-                      </widget>
+                    
                     </widget>
                   </item>
                 </layout>
