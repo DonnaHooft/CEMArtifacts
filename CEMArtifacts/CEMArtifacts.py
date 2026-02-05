@@ -597,7 +597,7 @@ class CEMArtifactsWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
             # Load numpy array (width, height, 9)
             combined_mask = np.load(mask_path)
             combined_mask = np.rot90(combined_mask, k=-1, axes=(0, 1))  # Reverse the k=1 rotation - adjusted this
-            print(f"[DEBUG] Loaded mask shape: {combined_mask.shape}, non-zero classes: {[i for i in range(9) if combined_mask[:,:,i].any()]}")
+            print(f"[DEBUG] Loaded mask shape: {combined_mask.shape}, non-zero classes: {[i for i in range(8) if combined_mask[:,:,i].any()]}")
         
             
             # Check if mask is all zeros
